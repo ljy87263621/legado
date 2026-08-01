@@ -26,3 +26,5 @@ rootProject.name = 'legado'
 
 include ':app'
 include ':modules:rhino'
+include ':modules:core'
+include ':desktop:app'
