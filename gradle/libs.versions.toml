@@ -62,6 +62,7 @@ androidsvg = "1.4"
 # MikeOrtiz/TouchImageView 仍在维护（maintenance mode），缩放手势库，替代已停滞的 chrisbanes/PhotoView
 touchimageview = "3.7.2"
 junit = "4.13.2"
+sqliteJdbc = "3.49.1.0"
 
 [libraries]
 
@@ -138,6 +139,7 @@ gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 json-path = { module = "com.jayway.jsonpath:json-path", version.ref = "jsonPath" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 junit = { module = "junit:junit", version.ref = "junit" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 

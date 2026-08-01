@@ -9,18 +9,29 @@ data class CoreBook(
     val tocUrl: String = "",
     val coverUrl: String? = null,
     val intro: String? = null,
+    val kind: String? = null,
+    val customTag: String? = null,
+    val customCoverUrl: String? = null,
+    val customIntro: String? = null,
+    val charset: String? = null,
     val type: Int = 0,
     val group: Long = 0,
+    val latestChapterTitle: String? = null,
+    val latestChapterTime: Long = 0,
+    val lastCheckTime: Long = 0,
+    val lastCheckCount: Int = 0,
     val totalChapterNum: Int = 0,
     val durChapterIndex: Int = 0,
     val durChapterPos: Int = 0,
     val durChapterTitle: String? = null,
     val durChapterTime: Long = 0,
+    val wordCount: String? = null,
     val canUpdate: Boolean = true,
     val order: Int = 0,
     val originOrder: Int = 0,
     val variable: String? = null,
-    val readConfigJson: String? = null
+    val readConfigJson: String? = null,
+    val syncTime: Long = 0
 )
 
 data class CoreBookSource(
@@ -33,8 +44,8 @@ data class CoreBookSource(
     val enabled: Boolean = true,
     val enabledExplore: Boolean = true,
     val enabledReview: Boolean = true,
-    val enabledCookieJar: Boolean = true,
-    val enableDangerousApi: Boolean = false,
+    val enabledCookieJar: Boolean? = true,
+    val enableDangerousApi: Boolean? = false,
     val concurrentRate: String? = null,
     val header: String? = null,
     val loginUrl: String? = null,
@@ -47,7 +58,16 @@ data class CoreBookSource(
     val ruleExplore: String? = null,
     val ruleReview: String? = null,
     val jsLib: String? = null,
-    val bookSourceComment: String? = null
+    val loginCheckJs: String? = null,
+    val coverDecodeJs: String? = null,
+    val bookSourceComment: String? = null,
+    val variableComment: String? = null,
+    val lastUpdateTime: Long = 0,
+    val respondTime: Long = 180000,
+    val weight: Int = 0,
+    val exploreUrl: String? = null,
+    val exploreScreen: String? = null,
+    val exploreStyle: Int = 0
 )
 
 data class CoreChapter(
@@ -61,5 +81,9 @@ data class CoreChapter(
     val resourceUrl: String? = null,
     val tag: String? = null,
     val wordCount: String? = null,
-    val variable: String? = null
+    val variable: String? = null,
+    val start: Long? = null,
+    val end: Long? = null,
+    val startFragmentId: String? = null,
+    val endFragmentId: String? = null
 )

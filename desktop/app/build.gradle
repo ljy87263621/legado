@@ -10,6 +10,7 @@ kotlin {
 
 dependencies {
     implementation project(':modules:core')
+    implementation project(':desktop:core-persistence')
     implementation(compose.desktop.currentOs)
     implementation(compose.runtime)
     implementation(compose.foundation)

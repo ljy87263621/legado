@@ -12,6 +12,9 @@ interface CoreLibrary {
 
     fun chapters(bookUrl: String): List<CoreChapter>
     fun saveChapter(chapter: CoreChapter)
+
+    fun content(chapter: CoreChapter): String?
+    fun saveContent(chapter: CoreChapter, content: String)
 }
 
 class InMemoryCoreLibrary : CoreLibrary {
@@ -30,6 +33,7 @@ class InMemoryCoreLibrary : CoreLibrary {
     override fun deleteBook(bookUrl: String) {
         booksByUrl.remove(bookUrl)
         chaptersByBook.remove(bookUrl)
+        contentsByChapter.remove(bookUrl)
     }
 
     override fun sources(): List<CoreBookSource> = sourcesByUrl.values.toList()
@@ -50,4 +54,14 @@ class InMemoryCoreLibrary : CoreLibrary {
         chaptersByBook
             .getOrPut(chapter.bookUrl) { linkedMapOf() }[chapter.url] = chapter
     }
+
+    override fun content(chapter: CoreChapter): String? =
+        contentsByChapter[chapter.bookUrl]?.get(chapter.url)
+
+    override fun saveContent(chapter: CoreChapter, content: String) {
+        contentsByChapter
+            .getOrPut(chapter.bookUrl) { linkedMapOf() }[chapter.url] = content
+    }
+
+    private val contentsByChapter = linkedMapOf<String, LinkedHashMap<String, String>>()
 }

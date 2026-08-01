@@ -11,12 +11,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.NavigateBefore
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Source
@@ -37,6 +43,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,30 +58,43 @@ import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.unit.DpSize
 import io.legado.core.library.CoreBook
-import io.legado.core.library.InMemoryCoreLibrary
+import io.legado.core.library.CoreLibrary
+import io.legado.desktop.persistence.DesktopDataDirectory
+import io.legado.desktop.persistence.SqliteCoreLibrary
+import java.awt.FileDialog
+import java.awt.Frame
+import java.nio.file.Path
 
 fun main() = application {
+    val library = remember {
+        SqliteCoreLibrary(DesktopDataDirectory.resolve().resolve("legado.db"))
+    }
     val windowState = rememberWindowState(
         size = DpSize(1180.dp, 760.dp),
         position = WindowPosition.Aligned(Alignment.Center)
     )
     Window(
-        onCloseRequest = ::exitApplication,
+        onCloseRequest = {
+            library.close()
+            exitApplication()
+        },
         title = "Legado",
         state = windowState
     ) {
-        LegadoApp()
+        LegadoApp(library)
     }
 }
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun LegadoApp() {
-    val library = remember { InMemoryCoreLibrary() }
+fun LegadoApp(library: CoreLibrary) {
     val bookshelfModel = remember { BookshelfModel(library) }
     val appState = remember { AppState() }
     var route by remember { mutableStateOf(appState.route) }
     var darkTheme by remember { mutableStateOf(appState.isDarkTheme) }
+    var selectedBookUrl by remember { mutableStateOf<String?>(null) }
+    var bookshelfRefreshToken by remember { mutableStateOf(0) }
+    var importError by remember { mutableStateOf<String?>(null) }
 
     MaterialTheme(colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -89,7 +109,29 @@ fun LegadoApp() {
                     appState.toggleTheme()
                     darkTheme = appState.isDarkTheme
                 },
-                bookshelfModel = bookshelfModel
+                bookshelfModel = bookshelfModel,
+                bookshelfRefreshToken = bookshelfRefreshToken,
+                importError = importError,
+                onDismissImportError = { importError = null },
+                onImport = {
+                    selectLocalBook()?.let { path ->
+                        runCatching { LocalBookImporter(library).importFile(path) }
+                            .onSuccess {
+                                importError = null
+                                bookshelfRefreshToken++
+                            }
+                            .onFailure { error ->
+                                importError = error.message ?: "无法导入文件"
+                            }
+                    }
+                },
+                onOpenBook = { bookUrl ->
+                    selectedBookUrl = bookUrl
+                    appState.navigate(AppRoute.READER)
+                    route = appState.route
+                },
+                selectedBookUrl = selectedBookUrl,
+                library = library
             )
         }
     }
@@ -101,8 +143,16 @@ private fun AppShell(
     onRouteChange: (AppRoute) -> Unit,
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
-    bookshelfModel: BookshelfModel
+    bookshelfModel: BookshelfModel,
+    bookshelfRefreshToken: Int,
+    importError: String?,
+    onDismissImportError: () -> Unit,
+    onImport: () -> Unit,
+    onOpenBook: (String) -> Unit,
+    selectedBookUrl: String?,
+    library: CoreLibrary
 ) {
+    bookshelfRefreshToken
     Row(modifier = Modifier.fillMaxSize()) {
         NavigationRail(
             modifier = Modifier.fillMaxHeight(),
@@ -127,8 +177,18 @@ private fun AppShell(
         when (route) {
             AppRoute.BOOKSHELF -> BookshelfScreen(
                 model = bookshelfModel,
-                onNavigate = onRouteChange
+                onNavigate = onRouteChange,
+                onImport = onImport,
+                importError = importError,
+                onDismissImportError = onDismissImportError,
+                onOpenBook = onOpenBook
             )
+            AppRoute.READER -> selectedBookUrl?.let { bookUrl ->
+                ReaderScreen(
+                    model = remember(bookUrl) { ReaderModel(library, bookUrl) },
+                    onBack = { onRouteChange(AppRoute.BOOKSHELF) }
+                )
+            } ?: PlaceholderScreen(AppRoute.READER)
             else -> PlaceholderScreen(route)
         }
     }
@@ -138,7 +198,11 @@ private fun AppShell(
 @OptIn(ExperimentalMaterial3Api::class)
 private fun BookshelfScreen(
     model: BookshelfModel,
-    onNavigate: (AppRoute) -> Unit
+    onNavigate: (AppRoute) -> Unit,
+    onImport: () -> Unit,
+    importError: String?,
+    onDismissImportError: () -> Unit,
+    onOpenBook: (String) -> Unit
 ) {
     var query by remember { mutableStateOf(model.query) }
     val books = model.visibleBooks()
@@ -148,6 +212,9 @@ private fun BookshelfScreen(
             TopAppBar(
                 title = { Text("书架") },
                 actions = {
+                    IconButton(onClick = onImport) {
+                        Icon(Icons.Default.FileOpen, contentDescription = "导入本地书籍")
+                    }
                     IconButton(onClick = { model.setQuery(query) }) {
                         Icon(Icons.Default.Search, contentDescription = "搜索书架")
                     }
@@ -172,6 +239,14 @@ private fun BookshelfScreen(
                 label = { Text("搜索书名或作者") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
             )
+            importError?.let { message ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onDismissImportError)
+                )
+            }
             Spacer(Modifier.height(24.dp))
             if (books.isEmpty()) {
                 EmptyBookshelf(onSearch = { onNavigate(AppRoute.SEARCH) })
@@ -182,7 +257,7 @@ private fun BookshelfScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     items(books, key = CoreBook::bookUrl) { book ->
-                        BookTile(book)
+                        BookTile(book, onClick = { onOpenBook(book.bookUrl) })
                     }
                 }
             }
@@ -217,8 +292,11 @@ private fun EmptyBookshelf(onSearch: () -> Unit) {
 }
 
 @Composable
-private fun BookTile(book: CoreBook) {
-    Surface(tonalElevation = 2.dp) {
+private fun BookTile(book: CoreBook, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        tonalElevation = 2.dp
+    ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(book.name.ifBlank { "未命名书籍" }, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
@@ -228,6 +306,96 @@ private fun BookTile(book: CoreBook) {
                 book.durChapterTitle ?: "尚未开始阅读",
                 style = MaterialTheme.typography.bodySmall
             )
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ReaderScreen(
+    model: ReaderModel,
+    onBack: () -> Unit
+) {
+    var revision by remember { mutableStateOf(0) }
+    var hasEnteredChapter by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState(model.currentPosition)
+
+    LaunchedEffect(model.currentChapter.url) {
+        if (hasEnteredChapter) {
+            scrollState.scrollTo(0)
+        } else {
+            hasEnteredChapter = true
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(model.currentChapter.title) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "返回书架")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            if (model.previousChapter()) revision++
+                        },
+                        enabled = model.hasPrevious
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "上一章")
+                    }
+                    IconButton(
+                        onClick = {
+                            if (model.nextChapter()) revision++
+                        },
+                        enabled = model.hasNext
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "下一章")
+                    }
+                }
+            )
+        }
+    ) { contentPadding ->
+        revision
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .verticalScroll(scrollState)
+                .padding(horizontal = 48.dp, vertical = 28.dp)
+        ) {
+            Text(
+                text = model.currentContent,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                IconButton(
+                    onClick = {
+                        if (model.previousChapter()) revision++
+                    },
+                    enabled = model.hasPrevious
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "上一章")
+                }
+                Button(onClick = { model.savePosition(scrollState.value) }) {
+                    Text("保存阅读位置")
+                }
+                IconButton(
+                    onClick = {
+                        if (model.nextChapter()) revision++
+                    },
+                    enabled = model.hasNext
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "下一章")
+                }
+            }
         }
     }
 }
@@ -249,4 +417,17 @@ private fun AppRoute.icon() = when (this) {
     AppRoute.SOURCES -> Icons.Default.Source
     AppRoute.SETTINGS -> Icons.Default.Settings
     AppRoute.READER -> Icons.Default.Book
+}
+
+private fun selectLocalBook(): Path? {
+    val dialog = FileDialog(null as Frame?, "导入本地书籍", FileDialog.LOAD).apply {
+        isMultipleMode = false
+        filenameFilter = java.io.FilenameFilter { _, name ->
+            name.endsWith(".txt", ignoreCase = true) || name.endsWith(".epub", ignoreCase = true)
+        }
+    }
+    dialog.isVisible = true
+    val directory = dialog.directory ?: return null
+    val filename = dialog.file ?: return null
+    return Path.of(directory, filename)
 }

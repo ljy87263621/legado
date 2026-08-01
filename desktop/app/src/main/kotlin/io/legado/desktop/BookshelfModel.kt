@@ -16,6 +16,10 @@ class BookshelfModel(
         query = value.trim()
     }
 
+    fun refresh() {
+        // The model reads directly from the library; this method gives the UI an explicit refresh boundary.
+    }
+
     fun visibleBooks(): List<CoreBook> {
         val normalizedQuery = query.trim()
         return library.books()
