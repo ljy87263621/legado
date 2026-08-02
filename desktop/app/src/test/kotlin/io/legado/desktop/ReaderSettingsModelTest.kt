@@ -41,4 +41,22 @@ class ReaderSettingsModelTest {
         assertEquals(0xFF121212, model.palette.backgroundArgb)
         assertEquals(0xFFFFFFFF, model.palette.contentArgb)
     }
+
+    @Test
+    fun reloadReadsSettingsWrittenAfterModelCreation() {
+        val library = InMemoryCoreLibrary()
+        val model = ReaderSettingsModel(library)
+
+        library.saveReaderSettings(
+            model.settings.copy(
+                textSize = 30,
+                theme = CoreReaderTheme.SEPIA
+            )
+        )
+
+        model.reload()
+
+        assertEquals(30, model.settings.textSize)
+        assertEquals(CoreReaderTheme.SEPIA, model.settings.theme)
+    }
 }

@@ -141,6 +141,11 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
         mapper = ::readBookmark
     )
 
+    override fun allBookmarks(): List<CoreBookmark> = queryList(
+        "SELECT * FROM bookmarks ORDER BY time DESC",
+        mapper = ::readBookmark
+    )
+
     override fun saveBookmark(bookmark: CoreBookmark) {
         connection.prepareStatement(BOOKMARK_UPSERT).use { statement ->
             bindBookmark(statement, bookmark)

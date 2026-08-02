@@ -143,6 +143,7 @@ fun LegadoApp(library: CoreLibrary) {
     var selectedBook by remember { mutableStateOf<CoreBook?>(null) }
     var bookshelfRefreshToken by remember { mutableStateOf(0) }
     var importError by remember { mutableStateOf<String?>(null) }
+    var backupFeedback by remember { mutableStateOf<String?>(null) }
 
     MaterialTheme(colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -192,6 +193,31 @@ fun LegadoApp(library: CoreLibrary) {
                 subscriptionModel = subscriptionModel,
                 detailModel = detailModel,
                 readerSettingsModel = readerSettingsModel,
+                backupFeedback = backupFeedback,
+                onDismissBackupFeedback = { backupFeedback = null },
+                onExportBackup = {
+                    selectBackupFile("导出本地备份", FileDialog.SAVE)?.let { path ->
+                        val result = BackupModel(library).export(path)
+                        backupFeedback = result.summary?.let { summary ->
+                            "备份已导出：${summary.books} 本书，${summary.chapters} 个章节"
+                        } ?: result.error ?: "备份导出失败"
+                    }
+                },
+                onImportBackup = {
+                    selectBackupFile("导入本地备份", FileDialog.LOAD)?.let { path ->
+                        val result = BackupModel(library).import(path)
+                        if (result.isSuccess) {
+                            bookshelfModel.refresh()
+                            sourceModel.refresh()
+                            subscriptionModel.refreshSources()
+                            readerSettingsModel.reload()
+                            bookshelfRefreshToken++
+                        }
+                        backupFeedback = result.summary?.let { summary ->
+                            "备份已导入：${summary.books} 本书，${summary.chapters} 个章节"
+                        } ?: result.error ?: "备份导入失败"
+                    }
+                },
                 onlineService = onlineService,
                 onBookshelfChanged = { bookshelfRefreshToken++ },
                 selectedBookUrl = selectedBookUrl,
@@ -222,6 +248,10 @@ private fun AppShell(
     subscriptionModel: SubscriptionModel,
     detailModel: BookDetailModel,
     readerSettingsModel: ReaderSettingsModel,
+    backupFeedback: String?,
+    onDismissBackupFeedback: () -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit,
     onlineService: OnlineBookService,
     onBookshelfChanged: () -> Unit,
     selectedBookUrl: String?,
@@ -290,7 +320,11 @@ private fun AppShell(
             )
             AppRoute.SETTINGS -> SettingsScreen(
                 model = readerSettingsModel,
-                onOpenReadRecords = { onRouteChange(AppRoute.READ_RECORDS) }
+                onOpenReadRecords = { onRouteChange(AppRoute.READ_RECORDS) },
+                backupFeedback = backupFeedback,
+                onDismissBackupFeedback = onDismissBackupFeedback,
+                onExportBackup = onExportBackup,
+                onImportBackup = onImportBackup
             )
             AppRoute.READ_RECORDS -> ReadRecordsScreen(
                 records = library.readRecords(),
@@ -1037,7 +1071,11 @@ private fun BookDetailScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 private fun SettingsScreen(
     model: ReaderSettingsModel,
-    onOpenReadRecords: () -> Unit
+    onOpenReadRecords: () -> Unit,
+    backupFeedback: String?,
+    onDismissBackupFeedback: () -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit
 ) {
     var revision by remember { mutableStateOf(0) }
     revision
@@ -1116,6 +1154,34 @@ private fun SettingsScreen(
                 Icon(Icons.Default.History, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("阅读记录")
+            }
+            Spacer(Modifier.height(24.dp))
+            Text("数据管理", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onExportBackup) {
+                    Icon(Icons.Default.Download, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("导出本地备份")
+                }
+                Button(onClick = onImportBackup) {
+                    Icon(Icons.Default.Upload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("导入本地备份")
+                }
+            }
+            backupFeedback?.let { message ->
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(message, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismissBackupFeedback) {
+                        Icon(Icons.Default.Delete, contentDescription = "关闭备份提示")
+                    }
+                }
             }
         }
     }
@@ -1412,4 +1478,23 @@ private fun selectJsonFile(title: String, mode: Int): Path? {
     val directory = dialog.directory ?: return null
     val filename = dialog.file ?: return null
     return Path.of(directory, filename)
+}
+
+private fun selectBackupFile(title: String, mode: Int): Path? {
+    val dialog = FileDialog(null as Frame?, title, mode).apply {
+        isMultipleMode = false
+        filenameFilter = java.io.FilenameFilter { _, name ->
+            name.endsWith(".zip", ignoreCase = true) || mode == FileDialog.SAVE
+        }
+        if (mode == FileDialog.SAVE) file = "legado-backup.zip"
+    }
+    dialog.isVisible = true
+    val directory = dialog.directory ?: return null
+    val filename = dialog.file ?: return null
+    val normalized = if (mode == FileDialog.SAVE && !filename.endsWith(".zip", ignoreCase = true)) {
+        "$filename.zip"
+    } else {
+        filename
+    }
+    return Path.of(directory, normalized)
 }

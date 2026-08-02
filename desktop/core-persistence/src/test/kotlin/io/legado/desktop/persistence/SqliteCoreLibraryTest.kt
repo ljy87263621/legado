@@ -4,9 +4,11 @@ import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreBookGroup
 import io.legado.core.library.CoreBookSource
 import io.legado.core.library.CoreBookmark
+import io.legado.core.library.CoreBackupService
 import io.legado.core.library.CoreChapter
 import io.legado.core.library.CoreReadRecord
 import io.legado.core.library.CoreReaderPageMode
+import io.legado.core.library.CoreReaderSettings
 import io.legado.core.library.CoreReaderTheme
 import java.nio.file.Files
 import java.nio.file.Path
@@ -212,6 +214,75 @@ class SqliteCoreLibraryTest {
         SqliteCoreLibrary(databasePath).use { library ->
             assertEquals(group, library.groups().single { it.groupId == group.groupId })
             assertEquals(listOf(bookmark), library.bookmarks("星河", "甲作者"))
+            assertEquals(listOf(record), library.readRecords())
+            assertEquals(settings, library.readerSettings())
+        }
+    }
+
+    @Test
+    fun backupRoundTripWorksWithSqliteLibraries() {
+        val sourceDatabase = tempDirectory.resolve("backup-source.db")
+        val targetDatabase = tempDirectory.resolve("backup-target.db")
+        val archive = tempDirectory.resolve("library-backup.zip")
+        val source = CoreBookSource(
+            bookSourceUrl = "https://source.example",
+            bookSourceName = "示例书源",
+            ruleContent = "{\"content\":\".content\"}"
+        )
+        val book = CoreBook(
+            bookUrl = "https://source.example/book/1",
+            name = "星河",
+            author = "甲作者",
+            origin = source.bookSourceUrl,
+            originName = source.bookSourceName,
+            group = 12L,
+            durChapterIndex = 0,
+            durChapterPos = 8
+        )
+        val chapter = CoreChapter(book.bookUrl, "chapter-1", "第一章", 0)
+        val group = CoreBookGroup(groupId = 12L, groupName = "备份分组", order = 3)
+        val bookmark = CoreBookmark(
+            time = 300L,
+            bookName = book.name,
+            bookAuthor = book.author,
+            chapterIndex = 0,
+            chapterPos = 8,
+            chapterName = chapter.title,
+            bookText = "章节正文",
+            content = "标注"
+        )
+        val record = CoreReadRecord(book.name, 20260802, 20L, 60L)
+        val settings = CoreReaderSettings(
+            textSize = 26,
+            lineSpacingExtra = 14,
+            theme = CoreReaderTheme.GREEN,
+            pageMode = CoreReaderPageMode.PAGED,
+            autoRead = true
+        )
+
+        SqliteCoreLibrary(sourceDatabase).use { library ->
+            library.saveSource(source)
+            library.saveGroup(group)
+            library.saveBook(book)
+            library.saveChapter(chapter)
+            library.saveContent(chapter, "章节正文")
+            library.saveBookmark(bookmark)
+            library.saveReadRecord(record)
+            library.saveReaderSettings(settings)
+            CoreBackupService().export(library, archive)
+        }
+
+        SqliteCoreLibrary(targetDatabase).use { library ->
+            CoreBackupService().import(library, archive)
+        }
+
+        SqliteCoreLibrary(targetDatabase).use { library ->
+            assertEquals(book, library.book(book.bookUrl))
+            assertEquals(source, library.source(source.bookSourceUrl))
+            assertEquals(listOf(chapter), library.chapters(book.bookUrl))
+            assertEquals("章节正文", library.content(chapter))
+            assertEquals(group, library.groups().single { it.groupId == group.groupId })
+            assertEquals(listOf(bookmark), library.bookmarks(book.name, book.author))
             assertEquals(listOf(record), library.readRecords())
             assertEquals(settings, library.readerSettings())
         }

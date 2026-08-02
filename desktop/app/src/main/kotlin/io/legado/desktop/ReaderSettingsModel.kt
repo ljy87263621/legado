@@ -19,6 +19,10 @@ class ReaderSettingsModel(
     val palette: ReaderPalette
         get() = settings.theme.palette()
 
+    fun reload() {
+        settings = library.readerSettings()
+    }
+
     fun update(
         textSize: Int = settings.textSize,
         lineSpacingExtra: Int = settings.lineSpacingExtra,

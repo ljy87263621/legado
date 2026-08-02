@@ -24,6 +24,7 @@ interface CoreLibrary {
     fun deleteGroup(groupId: Long)
 
     fun bookmarks(bookName: String, bookAuthor: String): List<CoreBookmark>
+    fun allBookmarks(): List<CoreBookmark>
     fun saveBookmark(bookmark: CoreBookmark)
     fun deleteBookmark(time: Long)
 
@@ -105,6 +106,9 @@ class InMemoryCoreLibrary : CoreLibrary {
         bookmarksByTime.values
             .filter { it.bookName == bookName && it.bookAuthor == bookAuthor }
             .sortedByDescending(CoreBookmark::time)
+
+    override fun allBookmarks(): List<CoreBookmark> =
+        bookmarksByTime.values.sortedByDescending(CoreBookmark::time)
 
     override fun saveBookmark(bookmark: CoreBookmark) {
         bookmarksByTime[bookmark.time] = bookmark
