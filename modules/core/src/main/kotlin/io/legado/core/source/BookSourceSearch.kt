@@ -7,6 +7,7 @@ import com.google.gson.JsonParser
 import com.jayway.jsonpath.JsonPath
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreBookSource
+import io.legado.core.library.CoreBookSourceType
 import io.legado.core.library.CoreLibrary
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
@@ -126,6 +127,9 @@ object BookSourceJsonCodec {
 
     private fun decodeSource(element: JsonElement): CoreBookSource {
         val objectValue = element.asJsonObject.deepCopy()
+        if (!objectValue.has("bookSourceUrl") && objectValue.has("sourceUrl")) {
+            return decodeLegacyRssSource(objectValue)
+        }
         ruleFields.forEach { field ->
             val value = objectValue.get(field)
             if (value?.isJsonObject == true || value?.isJsonArray == true) {
@@ -167,6 +171,62 @@ object BookSourceJsonCodec {
             exploreScreen = objectValue.string("exploreScreen"),
             exploreStyle = objectValue.int("exploreStyle", 0)
         )
+    }
+
+    private fun decodeLegacyRssSource(objectValue: JsonObject): CoreBookSource = CoreBookSource(
+        bookSourceUrl = objectValue.requiredString("sourceUrl"),
+        bookSourceName = objectValue.string("sourceName") ?: "",
+        bookSourceGroup = objectValue.string("sourceGroup"),
+        bookSourceType = CoreBookSourceType.RSS,
+        customOrder = objectValue.int("customOrder", 0),
+        enabled = objectValue.boolean("enabled", true),
+        enabledExplore = true,
+        enabledReview = true,
+        jsLib = objectValue.string("jsLib"),
+        enabledCookieJar = objectValue.nullableBoolean("enabledCookieJar", true),
+        enableDangerousApi = objectValue.nullableBoolean("enableDangerousApi", false),
+        concurrentRate = objectValue.string("concurrentRate"),
+        header = objectValue.string("header"),
+        loginUrl = objectValue.string("loginUrl"),
+        loginUi = objectValue.string("loginUi"),
+        loginCheckJs = objectValue.string("loginCheckJs"),
+        coverDecodeJs = objectValue.string("coverDecodeJs"),
+        bookSourceComment = objectValue.string("sourceComment"),
+        variableComment = objectValue.string("variableComment"),
+        lastUpdateTime = objectValue.long("lastUpdateTime", 0),
+        exploreUrl = objectValue.string("sortUrl"),
+        exploreStyle = objectValue.int("articleStyle", 0),
+        ruleExplore = encodeRule(
+            "bookList" to objectValue.string("ruleArticles"),
+            "name" to objectValue.string("ruleTitle"),
+            "author" to objectValue.string("rulePubDate"),
+            "intro" to objectValue.string("ruleDescription"),
+            "coverUrl" to objectValue.string("ruleImage"),
+            "bookUrl" to objectValue.string("ruleLink"),
+            "hasMoreRule" to objectValue.string("ruleNextPage")
+        ),
+        ruleContent = encodeRule(
+            "content" to objectValue.string("ruleContent"),
+            "webJs" to legacyWebJs(objectValue)
+        )
+    )
+
+    private fun encodeRule(vararg fields: Pair<String, String?>): String? {
+        val json = JsonObject()
+        fields.forEach { (key, value) ->
+            if (!value.isNullOrBlank()) json.addProperty(key, value)
+        }
+        return if (json.size() == 0) null else gson.toJson(json)
+    }
+
+    private fun legacyWebJs(objectValue: JsonObject): String? {
+        val style = objectValue.string("style").orEmpty()
+        val injectJs = objectValue.string("injectJs").orEmpty()
+        val styleJs = if (style.isBlank()) "" else
+            "var style = document.createElement('style');\n" +
+                "style.innerHTML = ${gson.toJson(style)};\n" +
+                "document.head.appendChild(style);\n"
+        return (styleJs + injectJs).ifBlank { null }
     }
 
     private fun JsonObject.requiredString(name: String): String =
@@ -215,6 +275,28 @@ class BookSourceSearchService(
         val results = search(keyword, page)
         results.forEach { result -> library.saveBook(result.book) }
         return results
+    }
+
+    fun explore(
+        source: CoreBookSource,
+        page: Int = 1,
+        exploreUrl: String? = source.exploreUrl
+    ): List<CoreSearchResult> {
+        require(page > 0) { "页码必须大于 0" }
+        val template = exploreUrl?.takeIf(String::isNotBlank)
+            ?: error("订阅源缺少发现地址: ${source.bookSourceUrl}")
+        val url = SourceUrlTemplate.expand(template, keyword = "", page = page)
+        val response = httpClient.get(url, parseHeaders(source.header))
+        check(response.statusCode in 200..399) { "订阅源请求失败: HTTP ${response.statusCode}" }
+        val rule = parseRule(source.ruleExplore ?: error("订阅源缺少发现规则: ${source.bookSourceUrl}"))
+        val baseUrl = response.url.ifBlank { url }
+        val records = when {
+            isRegexList(rule.bookList) -> parseRegexRecords(rule, response.body)
+            response.body.trimStart().startsWith("{") || response.body.trimStart().startsWith("[") ->
+                parseJsonRecords(rule, response.body)
+            else -> parseHtmlRecords(rule, response.body, baseUrl)
+        }
+        return deduplicate(records.mapNotNull { record -> toResult(source, rule, record, baseUrl) })
     }
 
     private fun searchSource(source: CoreBookSource, keyword: String, page: Int): List<CoreSearchResult> {

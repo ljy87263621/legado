@@ -130,6 +130,9 @@ fun LegadoApp(library: CoreLibrary) {
         SearchModel(library, BookSourceSearchService(library, httpClient))
     }
     val sourceModel = remember { SourceModel(library) }
+    val subscriptionModel = remember {
+        SubscriptionModel(library, BookSourceSearchService(library, httpClient))
+    }
     val detailModel = remember { BookDetailModel(library, onlineService) }
     val readerSettingsModel = remember { ReaderSettingsModel(library) }
     val appState = remember { AppState() }
@@ -186,6 +189,7 @@ fun LegadoApp(library: CoreLibrary) {
                 },
                 searchModel = searchModel,
                 sourceModel = sourceModel,
+                subscriptionModel = subscriptionModel,
                 detailModel = detailModel,
                 readerSettingsModel = readerSettingsModel,
                 onlineService = onlineService,
@@ -215,6 +219,7 @@ private fun AppShell(
     onOpenDetail: (CoreBook) -> Unit,
     searchModel: SearchModel,
     sourceModel: SourceModel,
+    subscriptionModel: SubscriptionModel,
     detailModel: BookDetailModel,
     readerSettingsModel: ReaderSettingsModel,
     onlineService: OnlineBookService,
@@ -275,6 +280,14 @@ private fun AppShell(
                 )
             } ?: PlaceholderScreen(AppRoute.BOOK_DETAIL)
             AppRoute.SOURCES -> SourcesScreen(model = sourceModel)
+            AppRoute.SUBSCRIPTIONS -> SubscriptionScreen(
+                model = subscriptionModel,
+                sourceModel = sourceModel,
+                onOpenArticle = { result ->
+                    val book = subscriptionModel.openArticle(result)
+                    onOpenBook(book.bookUrl)
+                }
+            )
             AppRoute.SETTINGS -> SettingsScreen(
                 model = readerSettingsModel,
                 onOpenReadRecords = { onRouteChange(AppRoute.READ_RECORDS) }
@@ -297,7 +310,6 @@ private fun AppShell(
                     onBack = { onRouteChange(AppRoute.BOOKSHELF) }
                 )
             } ?: PlaceholderScreen(AppRoute.READER)
-            else -> PlaceholderScreen(route)
         }
     }
 }
@@ -591,6 +603,167 @@ private fun SearchResultRow(
             }
             IconButton(onClick = onAdd) {
                 Icon(Icons.Default.Add, contentDescription = "加入书架")
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun SubscriptionScreen(
+    model: SubscriptionModel,
+    sourceModel: SourceModel,
+    onOpenArticle: (CoreSearchResult) -> Unit
+) {
+    var revision by remember { mutableStateOf(0) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var sourceMenuExpanded by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    revision
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            model.refreshSources()
+            if (model.selectedSource != null) model.refresh()
+        }
+        revision++
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("订阅") },
+                actions = {
+                    IconButton(onClick = {
+                        val path = selectJsonFile("导入订阅源", FileDialog.LOAD) ?: return@IconButton
+                        runCatching {
+                            sourceModel.importJson(Files.readString(path, StandardCharsets.UTF_8))
+                        }.onSuccess { count ->
+                            model.refreshSources()
+                            feedback = "已导入 $count 个书源"
+                            revision++
+                        }.onFailure { error ->
+                            feedback = error.message ?: "订阅源导入失败"
+                            revision++
+                        }
+                    }) {
+                        Icon(Icons.Default.Upload, contentDescription = "导入订阅源")
+                    }
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    model.refreshSources()
+                                    model.refresh()
+                                }
+                                revision++
+                            }
+                        },
+                        enabled = !model.isLoading
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新订阅")
+                    }
+                }
+            )
+        }
+    ) { contentPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .padding(horizontal = 28.dp, vertical = 20.dp)
+        ) {
+            feedback?.let { message ->
+                Text(message, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(10.dp))
+            }
+            model.error?.let { message ->
+                Text(message, color = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.height(10.dp))
+            }
+            if (model.sources.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("还没有订阅源，请导入 bookSourceType=5 的 RSS 书源")
+                }
+                return@Column
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box {
+                    Button(onClick = { sourceMenuExpanded = true }) {
+                        Text(model.selectedSource?.bookSourceName?.ifBlank { model.selectedSource?.bookSourceUrl.orEmpty() } ?: "选择订阅源")
+                    }
+                    DropdownMenu(
+                        expanded = sourceMenuExpanded,
+                        onDismissRequest = { sourceMenuExpanded = false }
+                    ) {
+                        model.sources.forEach { source ->
+                            DropdownMenuItem(
+                                text = { Text(source.bookSourceName.ifBlank { source.bookSourceUrl }) },
+                                onClick = {
+                                    model.selectSource(source.bookSourceUrl)
+                                    sourceMenuExpanded = false
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) { model.refresh() }
+                                        revision++
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                Text("${model.articles.size} 篇文章", style = MaterialTheme.typography.bodyMedium)
+            }
+            Spacer(Modifier.height(18.dp))
+            when {
+                model.isLoading -> Text("正在刷新订阅")
+                model.articles.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("当前订阅源暂无文章")
+                }
+                else -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(model.articles, key = { result -> result.book.bookUrl }) { result ->
+                        SubscriptionArticleRow(
+                            result = result,
+                            onOpen = { onOpenArticle(result) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionArticleRow(
+    result: CoreSearchResult,
+    onOpen: () -> Unit
+) {
+    Surface(
+        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(result.book.name.ifBlank { "未命名文章" }, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                result.book.author.ifBlank { result.source.bookSourceName },
+                style = MaterialTheme.typography.bodySmall
+            )
+            result.book.intro?.takeIf(String::isNotBlank)?.let { intro ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    intro,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
     }

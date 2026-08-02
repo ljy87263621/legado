@@ -70,6 +70,10 @@ data class CoreBookSource(
     val exploreStyle: Int = 0
 )
 
+object CoreBookSourceType {
+    const val RSS = 5
+}
+
 data class CoreChapter(
     val bookUrl: String,
     val url: String,

@@ -26,6 +26,38 @@ class BookSourceSearchTest {
     }
 
     @Test
+    fun legacyRssSourceJsonIsConvertedToBookSourceFormat() {
+        val source = BookSourceJsonCodec.decode(
+            """
+                [{
+                  "sourceUrl": "https://feed.example/rss",
+                  "sourceName": "旧订阅",
+                  "sourceGroup": "资讯",
+                  "sortUrl": "https://feed.example/rss?page={{page}}",
+                  "ruleArticles": ".article",
+                  "ruleTitle": "h2",
+                  "rulePubDate": ".date",
+                  "ruleDescription": ".summary",
+                  "ruleImage": "img@src",
+                  "ruleLink": "a@href",
+                  "ruleContent": ".content"
+                }]
+            """.trimIndent()
+        ).single()
+
+        assertEquals("https://feed.example/rss", source.bookSourceUrl)
+        assertEquals("旧订阅", source.bookSourceName)
+        assertEquals("资讯", source.bookSourceGroup)
+        assertEquals(5, source.bookSourceType)
+        assertEquals("https://feed.example/rss?page={{page}}", source.exploreUrl)
+        assertEquals(
+            """{"bookList":".article","name":"h2","author":".date","intro":".summary","coverUrl":"img@src","bookUrl":"a@href"}""",
+            source.ruleExplore
+        )
+        assertEquals("{\"content\":\".content\"}", source.ruleContent)
+    }
+
+    @Test
     fun searchUrlReplacesKeyAndPageVariables() {
         val source = CoreBookSource(
             bookSourceUrl = "https://source.example",
@@ -142,6 +174,52 @@ class BookSourceSearchTest {
 
         assertTrue(library.book("https://source.example/book/1") != null)
         assertEquals("星河", library.books().single().name)
+    }
+
+    @Test
+    fun exploreParsesSubscriptionArticlesAndResolvesRelativeLinks() {
+        val source = CoreBookSource(
+            bookSourceUrl = "https://feed.example",
+            bookSourceName = "示例订阅",
+            bookSourceType = 5,
+            exploreUrl = "https://feed.example/articles?page={{page}}",
+            ruleExplore = """
+                {
+                  "bookList": ".article",
+                  "name": "h2",
+                  "author": ".date",
+                  "intro": ".summary",
+                  "coverUrl": "img@src",
+                  "bookUrl": "a@href"
+                }
+            """.trimIndent()
+        )
+        val library = InMemoryCoreLibrary().also { it.saveSource(source) }
+        val client = FakeHttpClient { url, _ ->
+            assertEquals("https://feed.example/articles?page=1", url)
+            CoreHttpResponse(
+                url,
+                """
+                    <article class="article">
+                      <h2>今日要闻</h2>
+                      <span class="date">2026-08-02</span>
+                      <p class="summary">摘要内容</p>
+                      <img src="/cover.jpg">
+                      <a href="/article/1">阅读</a>
+                    </article>
+                """.trimIndent()
+            )
+        }
+        val service = BookSourceSearchService(library, client)
+
+        val result = service.explore(source, page = 1).single().book
+
+        assertEquals("今日要闻", result.name)
+        assertEquals("2026-08-02", result.author)
+        assertEquals("摘要内容", result.intro)
+        assertEquals("https://feed.example/cover.jpg", result.coverUrl)
+        assertEquals("https://feed.example/article/1", result.bookUrl)
+        assertEquals(5, result.type)
     }
 
     private class FakeHttpClient(
