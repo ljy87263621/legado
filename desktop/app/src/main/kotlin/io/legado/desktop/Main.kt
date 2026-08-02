@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +58,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
@@ -86,6 +89,7 @@ import io.legado.core.library.CoreReadRecord
 import io.legado.core.library.CoreReaderPageMode
 import io.legado.core.library.CoreReaderTheme
 import io.legado.core.source.BookSourceSearchService
+import io.legado.core.source.BookSourceJsonCodec
 import io.legado.core.source.CoreSearchResult
 import io.legado.core.source.JavaNetHttpClient
 import io.legado.core.source.OnlineBookService
@@ -808,6 +812,7 @@ private fun SubscriptionArticleRow(
 private fun SourcesScreen(model: SourceModel) {
     var revision by remember { mutableStateOf(0) }
     var feedback by remember { mutableStateOf<String?>(null) }
+    var editorState by remember { mutableStateOf<SourceEditorState?>(null) }
     revision
     val scope = rememberCoroutineScope()
 
@@ -816,6 +821,16 @@ private fun SourcesScreen(model: SourceModel) {
             TopAppBar(
                 title = { Text("书源") },
                 actions = {
+                    IconButton(onClick = {
+                        editorState = SourceEditorState(null, """{
+  "bookSourceUrl": "https://example.com",
+  "bookSourceName": "新书源",
+  "searchUrl": "",
+  "ruleSearch": ""
+}""")
+                    }) {
+                        Icon(Icons.Default.Add, contentDescription = "新建书源")
+                    }
                     IconButton(onClick = {
                         val path = selectJsonFile("导入书源", FileDialog.LOAD) ?: return@IconButton
                         runCatching {
@@ -878,6 +893,7 @@ private fun SourcesScreen(model: SourceModel) {
                     items(model.sources, key = CoreBookSource::bookSourceUrl) { source ->
                         SourceRow(
                             source = source,
+                            onEdit = { editorState = SourceEditorState(source.bookSourceUrl, BookSourceJsonCodec.encode(source)) },
                             onEnabledChange = { enabled ->
                                 model.setEnabled(source.bookSourceUrl, enabled)
                                 revision++
@@ -893,11 +909,30 @@ private fun SourcesScreen(model: SourceModel) {
             }
         }
     }
+    editorState?.let { state ->
+        SourceEditorDialog(
+            initialJson = state.json,
+            originalBookSourceUrl = state.originalBookSourceUrl,
+            model = model,
+            onDismiss = { editorState = null },
+            onSaved = { source ->
+                editorState = null
+                feedback = "已保存：${source.bookSourceName.ifBlank { source.bookSourceUrl }}"
+                revision++
+            }
+        )
+    }
 }
+
+private data class SourceEditorState(
+    val originalBookSourceUrl: String?,
+    val json: String
+)
 
 @Composable
 private fun SourceRow(
     source: CoreBookSource,
+    onEdit: () -> Unit,
     onEnabledChange: (Boolean) -> Unit,
     onDelete: () -> Unit
 ) {
@@ -921,6 +956,9 @@ private fun SourceRow(
                     )
                 }
                 Switch(checked = source.enabled, onCheckedChange = onEnabledChange)
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "编辑书源")
+                }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "删除书源")
                 }
@@ -931,6 +969,115 @@ private fun SourceRow(
             }
         }
     }
+}
+
+@Composable
+private fun SourceEditorDialog(
+    initialJson: String,
+    originalBookSourceUrl: String?,
+    model: SourceModel,
+    onDismiss: () -> Unit,
+    onSaved: (CoreBookSource) -> Unit
+) {
+    var json by remember(initialJson) { mutableStateOf(initialJson) }
+    var ruleField by remember { mutableStateOf("ruleSearch.searchUrl") }
+    var script by remember { mutableStateOf("return result;") }
+    var input by remember { mutableStateOf("") }
+    var baseUrl by remember { mutableStateOf("") }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var testing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑书源") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 620.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("完整 JSON", style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(
+                    value = json,
+                    onValueChange = { json = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 240.dp),
+                    minLines = 10,
+                    label = { Text("书源 JSON") }
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                Text("脚本测试", style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(
+                    value = ruleField,
+                    onValueChange = { ruleField = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("规则字段") }
+                )
+                OutlinedTextField(
+                    value = script,
+                    onValueChange = { script = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    label = { Text("JavaScript") }
+                )
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    label = { Text("输入内容") }
+                )
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("基础 URL，可选") }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                testing = true
+                                feedback = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        "结果：${model.testScript(json, ruleField, script, input, baseUrl)}"
+                                    }.getOrElse { error -> error.message ?: "脚本测试失败" }
+                                }
+                                testing = false
+                            }
+                        },
+                        enabled = !testing
+                    ) {
+                        Text(if (testing) "测试中" else "测试脚本")
+                    }
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                }
+                feedback?.let { message ->
+                    Text(
+                        text = message,
+                        color = if (message.startsWith("结果：")) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                runCatching { model.saveJson(json, originalBookSourceUrl) }
+                    .onSuccess(onSaved)
+                    .onFailure { error -> feedback = error.message ?: "书源保存失败" }
+            }) {
+                Text("保存")
+            }
+        }
+    )
 }
 
 @Composable

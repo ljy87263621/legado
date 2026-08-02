@@ -285,8 +285,14 @@ class BookSourceSearchService(
         require(page > 0) { "页码必须大于 0" }
         val template = exploreUrl?.takeIf(String::isNotBlank)
             ?: error("订阅源缺少发现地址: ${source.bookSourceUrl}")
-        val url = SourceUrlTemplate.expand(template, keyword = "", page = page)
-        val response = httpClient.get(url, parseHeaders(source.header))
+        val url = CoreSourceScriptSupport.expandUrl(
+            source = source,
+            template = template,
+            keyword = "",
+            page = page,
+            ruleField = "exploreUrl"
+        )
+        val response = httpClient.get(url, CoreSourceScriptSupport.headers(source, url, mapOf("page" to page)))
         check(response.statusCode in 200..399) { "订阅源请求失败: HTTP ${response.statusCode}" }
         val rule = parseRule(source.ruleExplore ?: error("订阅源缺少发现规则: ${source.bookSourceUrl}"))
         val baseUrl = response.url.ifBlank { url }
@@ -300,8 +306,17 @@ class BookSourceSearchService(
     }
 
     private fun searchSource(source: CoreBookSource, keyword: String, page: Int): List<CoreSearchResult> {
-        val url = SourceUrlTemplate.expand(source.searchUrl!!, keyword, page)
-        val response = httpClient.get(url, parseHeaders(source.header))
+        val url = CoreSourceScriptSupport.expandUrl(
+            source = source,
+            template = source.searchUrl!!,
+            keyword = keyword,
+            page = page,
+            ruleField = "searchUrl"
+        )
+        val response = httpClient.get(
+            url,
+            CoreSourceScriptSupport.headers(source, url, mapOf("key" to keyword, "keyword" to keyword, "page" to page))
+        )
         check(response.statusCode in 200..399) { "书源请求失败: HTTP ${response.statusCode}" }
         val rule = parseRule(source.ruleSearch!!)
         val baseUrl = response.url.ifBlank { url }
@@ -424,17 +439,6 @@ class BookSourceSearchService(
                 "name:${book.name.lowercase(Locale.ROOT)}|author:${book.author.lowercase(Locale.ROOT)}"
             }
             seen.add(key)
-        }
-    }
-
-    private fun parseHeaders(raw: String?): Map<String, String> {
-        if (raw.isNullOrBlank()) return emptyMap()
-        return runCatching {
-            JsonParser.parseString(raw).asJsonObject.entrySet().associate { (key, value) -> key to value.asString }
-        }.getOrElse {
-            raw.lineSequence()
-                .mapNotNull { line -> line.split(':', limit = 2).takeIf { it.size == 2 } }
-                .associate { it[0].trim() to it[1].trim() }
         }
     }
 

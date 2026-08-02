@@ -71,6 +71,41 @@ class BookSourceSearchTest {
     }
 
     @Test
+    fun dynamicHeaderCanUseSharedJsLibrary() {
+        val source = CoreBookSource(
+            bookSourceUrl = "https://source.example",
+            searchUrl = "https://source.example/search?q={{key}}",
+            header = "@js:JSON.stringify({ 'X-Token': makeToken() })",
+            jsLib = "function makeToken() { return 'token-from-js'; }",
+            ruleSearch = "{\"bookList\":\".book\",\"name\":\"h2\"}"
+        )
+        val client = FakeHttpClient { _, headers ->
+            assertEquals("token-from-js", headers["X-Token"])
+            CoreHttpResponse("https://source.example", "<div class='book'><h2>星河</h2></div>")
+        }
+        val service = BookSourceSearchService(InMemoryCoreLibrary().also { it.saveSource(source) }, client)
+
+        assertEquals("星河", service.search("星河").single().book.name)
+    }
+
+    @Test
+    fun dynamicSearchUrlCanUseKeyAndSharedJsLibrary() {
+        val source = CoreBookSource(
+            bookSourceUrl = "https://source.example",
+            searchUrl = "@js:'https://source.example/search?q=' + encodeURIComponent(key)",
+            jsLib = "function encodeURIComponent(value) { return value.replace(' ', '%20'); }",
+            ruleSearch = "{\"bookList\":\".book\",\"name\":\"h2\"}"
+        )
+        val client = FakeHttpClient { url, _ ->
+            assertEquals("https://source.example/search?q=星河", url)
+            CoreHttpResponse(url, "<div class='book'><h2>星河</h2></div>")
+        }
+        val service = BookSourceSearchService(InMemoryCoreLibrary().also { it.saveSource(source) }, client)
+
+        assertEquals("星河", service.search("星河").single().book.name)
+    }
+
+    @Test
     fun htmlSearchParsesBooksAndDeduplicatesByBookUrl() {
         val source = CoreBookSource(
             bookSourceUrl = "https://source.example",

@@ -8,6 +8,7 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.json.path)
     implementation(libs.jsoup)
+    implementation(libs.mozilla.rhino)
     testImplementation(libs.junit)
 }
 

@@ -25,7 +25,9 @@
 
 ## Current Increment
 
-The next independently testable increment is local backup/restore. The archive will contain a versioned manifest plus JSON files for books, chapters, chapter contents, groups, sources, bookmarks, reading records, and reader settings. Restore will upsert records through `CoreLibrary`, validate the manifest before mutation, and expose import/export actions in the desktop settings route.
+The current independently testable increment is book-source script execution and desktop source management. The JVM core runs source `@js:` and `<js>` rules through a restricted Rhino runtime with a timeout, Java class access disabled, shared `jsLib`, and contextual errors. Search, dynamic headers and URLs, book-info initialization, `preUpdateJs`, TOC formatting, content-title scripts, and the explicit browser-dependent `webJs` boundary are covered by focused tests. The desktop source route can import/export sources, edit a complete source JSON document, and run a rule script against supplied input with `source`, `baseUrl`, `result`, `input`, and `src` bindings. Local ZIP backup/restore remains available from settings and is covered separately.
+
+The script increment intentionally does not claim Android parity. It provides a safe, testable JVM subset and an explicit failure for browser-dependent rules. Full Android `JsExtensions`, login/cookie state, source variables, URL options and embedded rule fragments, XPath/JSON/JS `init` semantics, `refreshTocUrl()`, `coverDecodeJs`, review scripts, and WebView execution remain separate workstreams.
 
 ## Verification Gates
 
@@ -33,3 +35,14 @@ The next independently testable increment is local backup/restore. The archive w
 - Run all `modules:core`, `desktop:core-persistence`, and `desktop:app` tests after cross-module changes.
 - Build the portable Windows EXE with `:desktop:app:packageExe` before reporting a deliverable.
 - Keep a written list of Android capabilities that remain unimplemented; do not claim full parity until each item has GUI and behavioral evidence.
+
+## Current Android Gaps
+
+- Android `JsExtensions` and complete source/book/chapter variable persistence.
+- Login UI and `loginCheckJs`, login headers, cookie management, and cookie-switch semantics.
+- Complex dynamic URL fragments, `{{...}}` embedded JavaScript, and URL options.
+- Full XPath/JSON/JS `init` rule semantics and complete `refreshTocUrl()` behavior.
+- Browser/WebView `webJs`, `coverDecodeJs`, and review/paragraph-comment scripts.
+- Source auto-update, source filters, concurrent-rate semantics, and complete explore/review flows.
+- Audio, video, image/comic, download-task, auto-read, true paged layout, dictionary, and TXT TOC behavior.
+- Desktop file associations, keyboard shortcuts, local server/config management, and expanded portable-release runtime verification.
