@@ -43,4 +43,16 @@ class AppRouteTest {
             AppRoute.primary.map(AppRoute::label)
         )
     }
+
+    @Test
+    fun bookDetailIsAnInternalRouteOutsidePrimaryNavigation() {
+        assertEquals("详情", AppRoute.BOOK_DETAIL.label)
+        assertFalse(AppRoute.BOOK_DETAIL in AppRoute.primary)
+    }
+
+    @Test
+    fun readingRecordsIsAnInternalRouteOutsidePrimaryNavigation() {
+        assertEquals("阅读记录", AppRoute.READ_RECORDS.label)
+        assertFalse(AppRoute.READ_RECORDS in AppRoute.primary)
+    }
 }

@@ -3,6 +3,7 @@ package io.legado.core.library
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CoreLibraryTest {
@@ -47,6 +48,29 @@ class CoreLibraryTest {
 
         assertEquals(1, library.sources().size)
         assertEquals("更新源", library.source("https://example.com/source")?.bookSourceName)
+    }
+
+    @Test
+    fun sourcesCanBeDeletedAndEnabledSourcesAreFiltered() {
+        library.saveSource(
+            CoreBookSource(
+                bookSourceUrl = "source-disabled",
+                bookSourceName = "停用源",
+                enabled = false
+            )
+        )
+        library.saveSource(
+            CoreBookSource(
+                bookSourceUrl = "source-enabled",
+                bookSourceName = "启用源"
+            )
+        )
+
+        assertEquals(listOf("source-enabled"), library.enabledSources().map(CoreBookSource::bookSourceUrl))
+
+        library.deleteSource("source-disabled")
+
+        assertNull(library.source("source-disabled"))
     }
 
     @Test
@@ -161,5 +185,62 @@ class CoreLibraryTest {
         library.saveContent(chapter, "正文内容")
 
         assertEquals("正文内容", library.content(chapter))
+    }
+
+    @Test
+    fun readerDataCanBeSavedQueriedAndDeleted() {
+        val library = InMemoryCoreLibrary()
+        val group = CoreBookGroup(groupId = 1L, groupName = "玄幻", order = 2)
+        val bookmark = CoreBookmark(
+            time = 100L,
+            bookName = "星河",
+            bookAuthor = "甲作者",
+            chapterIndex = 3,
+            chapterName = "第三章",
+            content = "值得回看的段落"
+        )
+        val record = CoreReadRecord(
+            bookName = "星河",
+            day = 20260802,
+            startSec = 10L,
+            endSec = 40L
+        )
+
+        library.saveGroup(group)
+        library.saveBookmark(bookmark)
+        library.saveReadRecord(record)
+
+        assertEquals(listOf(group), library.groups())
+        assertEquals(listOf(bookmark), library.bookmarks("星河", "甲作者"))
+        assertEquals(listOf(record), library.readRecords())
+
+        library.deleteGroup(group.groupId)
+        library.deleteBookmark(bookmark.time)
+        library.deleteReadRecords("星河")
+
+        assertTrue(library.groups().isEmpty())
+        assertTrue(library.bookmarks("星河", "甲作者").isEmpty())
+        assertTrue(library.readRecords().isEmpty())
+    }
+
+    @Test
+    fun readerSettingsExposeAndroidLikeDefaultsAndPersistUpdates() {
+        val library = InMemoryCoreLibrary()
+
+        assertEquals(20, library.readerSettings().textSize)
+        assertEquals(12, library.readerSettings().lineSpacingExtra)
+        assertEquals(CoreReaderTheme.DAY, library.readerSettings().theme)
+        assertEquals(CoreReaderPageMode.SCROLL, library.readerSettings().pageMode)
+
+        val updated = library.readerSettings().copy(
+            textSize = 24,
+            lineSpacingExtra = 16,
+            theme = CoreReaderTheme.NIGHT,
+            pageMode = CoreReaderPageMode.PAGED,
+            autoRead = true
+        )
+        library.saveReaderSettings(updated)
+
+        assertEquals(updated, library.readerSettings())
     }
 }

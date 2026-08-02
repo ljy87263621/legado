@@ -1,8 +1,13 @@
 package io.legado.desktop.persistence
 
 import io.legado.core.library.CoreBook
+import io.legado.core.library.CoreBookGroup
 import io.legado.core.library.CoreBookSource
+import io.legado.core.library.CoreBookmark
 import io.legado.core.library.CoreChapter
+import io.legado.core.library.CoreReadRecord
+import io.legado.core.library.CoreReaderPageMode
+import io.legado.core.library.CoreReaderTheme
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.Connection
@@ -162,6 +167,121 @@ class SqliteCoreLibraryTest {
     }
 
     @Test
+    fun readerDataSurvivesClosingAndReopeningTheDatabase() {
+        val databasePath = tempDirectory.resolve("reader-data.db")
+        val group = CoreBookGroup(
+            groupId = 8L,
+            groupName = "玄幻",
+            cover = "group-cover",
+            order = 2,
+            enableRefresh = false,
+            show = true,
+            bookSort = 3
+        )
+        val bookmark = CoreBookmark(
+            time = 100L,
+            bookName = "星河",
+            bookAuthor = "甲作者",
+            chapterIndex = 3,
+            chapterPos = 20,
+            chapterName = "第三章",
+            bookText = "章节原文",
+            content = "值得回看的段落"
+        )
+        val record = CoreReadRecord(
+            bookName = "星河",
+            day = 20260802,
+            startSec = 10L,
+            endSec = 40L
+        )
+        val settings = io.legado.core.library.CoreReaderSettings(
+            textSize = 24,
+            lineSpacingExtra = 16,
+            theme = CoreReaderTheme.NIGHT,
+            pageMode = CoreReaderPageMode.PAGED,
+            autoRead = true
+        )
+
+        SqliteCoreLibrary(databasePath).use { library ->
+            library.saveGroup(group)
+            library.saveBookmark(bookmark)
+            library.saveReadRecord(record)
+            library.saveReaderSettings(settings)
+        }
+
+        SqliteCoreLibrary(databasePath).use { library ->
+            assertEquals(group, library.groups().single { it.groupId == group.groupId })
+            assertEquals(listOf(bookmark), library.bookmarks("星河", "甲作者"))
+            assertEquals(listOf(record), library.readRecords())
+            assertEquals(settings, library.readerSettings())
+        }
+    }
+
+    @Test
+    fun newDatabasesContainAndroidStandardBookGroups() {
+        val databasePath = tempDirectory.resolve("standard-groups.db")
+
+        SqliteCoreLibrary(databasePath).use { library ->
+            assertEquals(
+                listOf(-1L, -2L, -4L, -11L),
+                library.groups().map(CoreBookGroup::groupId)
+            )
+        }
+    }
+
+    @Test
+    fun readsExistingAndroidStyleReaderTables() {
+        val databasePath = tempDirectory.resolve("android-reader-data.db")
+        DriverManager.getConnection("jdbc:sqlite:${databasePath.toAbsolutePath()}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(ANDROID_GROUPS_SCHEMA)
+                statement.execute(ANDROID_BOOKMARKS_SCHEMA)
+                statement.execute(ANDROID_READ_RECORD_SCHEMA)
+            }
+            connection.prepareStatement(
+                "INSERT INTO book_groups(groupId, groupName, cover, `order`, enableRefresh, show, bookSort) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            ).use { statement ->
+                statement.setLong(1, 21L)
+                statement.setString(2, "兼容分组")
+                statement.setString(3, "cover")
+                statement.setInt(4, 4)
+                statement.setInt(5, 0)
+                statement.setInt(6, 1)
+                statement.setInt(7, 2)
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                "INSERT INTO bookmarks(time, bookName, bookAuthor, chapterIndex, chapterPos, chapterName, bookText, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            ).use { statement ->
+                statement.setLong(1, 200L)
+                statement.setString(2, "兼容书")
+                statement.setString(3, "兼容作者")
+                statement.setInt(4, 5)
+                statement.setInt(5, 6)
+                statement.setString(6, "第五章")
+                statement.setString(7, "原文")
+                statement.setString(8, "摘录")
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                "INSERT INTO readRecord(bookName, day, startSec, endSec) VALUES (?, ?, ?, ?)"
+            ).use { statement ->
+                statement.setString(1, "兼容书")
+                statement.setInt(2, 20260802)
+                statement.setLong(3, 100L)
+                statement.setLong(4, 120L)
+                statement.executeUpdate()
+            }
+        }
+
+        SqliteCoreLibrary(databasePath).use { library ->
+            assertEquals("兼容分组", library.groups().single { it.groupId == 21L }.groupName)
+            assertEquals("摘录", library.bookmarks("兼容书", "兼容作者").single().content)
+            assertEquals(120L, library.readRecords().single().endSec)
+        }
+    }
+
+    @Test
     fun readsAnExistingAndroidStyleCoreSchema() {
         val databasePath = tempDirectory.resolve("legado.db")
         DriverManager.getConnection("jdbc:sqlite:${databasePath.toAbsolutePath()}").use { connection ->
@@ -257,6 +377,38 @@ class SqliteCoreLibraryTest {
                 start INTEGER, end INTEGER, startFragmentId TEXT, endFragmentId TEXT,
                 variable TEXT, PRIMARY KEY (bookUrl, url),
                 FOREIGN KEY (bookUrl) REFERENCES books(bookUrl) ON DELETE CASCADE
+            )
+        """
+        const val ANDROID_GROUPS_SCHEMA = """
+            CREATE TABLE book_groups (
+                groupId INTEGER NOT NULL PRIMARY KEY,
+                groupName TEXT NOT NULL,
+                cover TEXT,
+                `order` INTEGER NOT NULL DEFAULT 0,
+                enableRefresh INTEGER NOT NULL DEFAULT 1,
+                show INTEGER NOT NULL DEFAULT 1,
+                bookSort INTEGER NOT NULL DEFAULT -1
+            )
+        """
+        const val ANDROID_BOOKMARKS_SCHEMA = """
+            CREATE TABLE bookmarks (
+                time INTEGER NOT NULL PRIMARY KEY,
+                bookName TEXT NOT NULL,
+                bookAuthor TEXT NOT NULL,
+                chapterIndex INTEGER NOT NULL DEFAULT 0,
+                chapterPos INTEGER NOT NULL DEFAULT 0,
+                chapterName TEXT NOT NULL DEFAULT '',
+                bookText TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT ''
+            )
+        """
+        const val ANDROID_READ_RECORD_SCHEMA = """
+            CREATE TABLE readRecord (
+                bookName TEXT NOT NULL,
+                day INTEGER NOT NULL,
+                startSec INTEGER NOT NULL,
+                endSec INTEGER NOT NULL,
+                PRIMARY KEY(bookName, day, startSec)
             )
         """
     }

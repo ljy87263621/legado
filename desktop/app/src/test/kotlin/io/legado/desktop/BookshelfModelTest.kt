@@ -1,6 +1,8 @@
 package io.legado.desktop
 
 import io.legado.core.library.CoreBook
+import io.legado.core.library.CoreBookGroup
+import io.legado.core.library.CoreBookGroupIds
 import io.legado.core.library.InMemoryCoreLibrary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -62,5 +64,35 @@ class BookshelfModelTest {
 
         assertEquals(2, model.visibleBooks().size)
         assertEquals("", model.query)
+    }
+
+    @Test
+    fun selectingAGroupFiltersBooksUsingAndroidBitmaskSemantics() {
+        val library = InMemoryCoreLibrary()
+        library.saveGroup(CoreBookGroup(groupId = 1L, groupName = "玄幻", order = 1))
+        library.saveGroup(CoreBookGroup(groupId = 2L, groupName = "科幻", order = 2))
+        library.saveBook(CoreBook("book-fantasy", name = "星河", group = 1L))
+        library.saveBook(CoreBook("book-scifi", name = "远航", group = 2L))
+        library.saveBook(CoreBook("book-both", name = "交界", group = 3L))
+        val model = BookshelfModel(library)
+
+        model.selectGroup(1L)
+
+        assertEquals(setOf("星河", "交界"), model.visibleBooks().map(CoreBook::name).toSet())
+        assertEquals("玄幻", model.selectedGroup?.groupName)
+    }
+
+    @Test
+    fun assigningBookToGroupUpdatesItsBitmaskAndUngroupedSelection() {
+        val library = InMemoryCoreLibrary()
+        library.saveGroup(CoreBookGroup(groupId = 1L, groupName = "玄幻", order = 1))
+        library.saveBook(CoreBook("book-1", name = "星河"))
+        val model = BookshelfModel(library)
+
+        model.assignBookToGroup("book-1", 1L)
+
+        assertEquals(1L, library.book("book-1")?.group)
+        model.selectGroup(CoreBookGroupIds.UNGROUPED)
+        assertTrue(model.visibleBooks().isEmpty())
     }
 }

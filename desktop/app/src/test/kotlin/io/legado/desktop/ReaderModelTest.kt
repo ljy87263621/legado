@@ -2,13 +2,46 @@ package io.legado.desktop
 
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreChapter
+import io.legado.core.library.CoreBookSource
+import io.legado.core.library.CoreBookmark
 import io.legado.core.library.InMemoryCoreLibrary
+import io.legado.core.library.CoreReadRecord
+import io.legado.core.source.CoreHttpClient
+import io.legado.core.source.CoreHttpResponse
+import io.legado.core.source.OnlineBookService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderModelTest {
+
+    @Test
+    fun readerLoadsMissingContentThroughOnlineService() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://source.example",
+            ruleContent = "{\"content\":\".content\"}"
+        )
+        val book = CoreBook("https://source.example/book/1", origin = source.bookSourceUrl)
+        val chapter = CoreChapter(book.bookUrl, "https://source.example/chapter/1", "第一章", 0)
+        library.saveSource(source)
+        library.saveBook(book)
+        library.saveChapter(chapter)
+        val model = ReaderModel(
+            library,
+            book.bookUrl,
+            OnlineBookService(library, object : CoreHttpClient {
+                override fun get(url: String, headers: Map<String, String>): CoreHttpResponse =
+                    CoreHttpResponse(url, "<div class='content'>在线正文</div>")
+            })
+        )
+
+        assertTrue(model.loadCurrentContent())
+        assertEquals("在线正文", model.currentContent)
+        assertEquals("在线正文", library.content(chapter))
+        assertTrue(model.error == null)
+    }
 
     @Test
     fun readerStartsAtSavedProgressAndCanMoveBetweenChapters() {
@@ -31,6 +64,23 @@ class ReaderModelTest {
 
         assertEquals("第一章", model.currentChapter.title)
         assertTrue(model.hasNext)
+    }
+
+    @Test
+    fun readerCanStartAtAChapterSelectedFromBookDetails() {
+        val library = InMemoryCoreLibrary()
+        val first = CoreChapter("book-selected", "chapter-1", "第一章", 0)
+        val second = CoreChapter("book-selected", "chapter-2", "第二章", 1)
+        library.saveBook(CoreBook("book-selected", name = "书", durChapterIndex = 0))
+        library.saveChapter(first)
+        library.saveChapter(second)
+        library.saveContent(first, "第一章正文")
+        library.saveContent(second, "第二章正文")
+
+        val model = ReaderModel(library, "book-selected", startChapterIndex = 1)
+
+        assertEquals("第二章", model.currentChapter.title)
+        assertEquals("第二章正文", model.currentContent)
     }
 
     @Test
@@ -67,5 +117,89 @@ class ReaderModelTest {
         model.savePosition(7)
 
         assertEquals(7, model.currentPosition)
+    }
+
+    @Test
+    fun savingPositionPersistsAReadingSessionRecord() {
+        val library = InMemoryCoreLibrary()
+        val chapter = CoreChapter("book-4", "chapter-1", "第一章", 0)
+        library.saveBook(CoreBook("book-4", name = "书", author = "作者"))
+        library.saveChapter(chapter)
+        library.saveContent(chapter, "正文")
+        var now = 100L
+        val model = ReaderModel(library, "book-4", clockSeconds = { now })
+
+        now = 130L
+        model.savePosition(4)
+
+        assertEquals(
+            listOf(
+                io.legado.core.library.CoreReadRecord(
+                    bookName = "书",
+                    day = CoreReadRecord.dayKey(130L),
+                    startSec = 100L,
+                    endSec = 130L
+                )
+            ),
+            library.readRecords()
+        )
+    }
+
+    @Test
+    fun readerCanCreateAndRemoveAChapterBookmark() {
+        val library = InMemoryCoreLibrary()
+        val chapter = CoreChapter("book-5", "chapter-1", "第一章", 0)
+        library.saveBook(CoreBook("book-5", name = "书", author = "作者"))
+        library.saveChapter(chapter)
+        library.saveContent(chapter, "章节原文")
+        val model = ReaderModel(library, "book-5")
+
+        val bookmark = model.addBookmark(content = "值得回看")
+
+        assertEquals(
+            listOf(
+                bookmark.copy(
+                    time = bookmark.time,
+                    bookName = "书",
+                    bookAuthor = "作者",
+                    chapterIndex = 0,
+                    chapterName = "第一章",
+                    bookText = "章节原文",
+                    content = "值得回看"
+                )
+            ),
+            library.bookmarks("书", "作者")
+        )
+        assertTrue(model.removeBookmark(bookmark.time))
+        assertTrue(library.bookmarks("书", "作者").isEmpty())
+    }
+
+    @Test
+    fun readerListsBookmarksAndCanJumpToOne() {
+        val library = InMemoryCoreLibrary()
+        val first = CoreChapter("book-bookmarks", "chapter-1", "第一章", 0)
+        val second = CoreChapter("book-bookmarks", "chapter-2", "第二章", 1)
+        library.saveBook(CoreBook("book-bookmarks", name = "书", author = "作者"))
+        library.saveChapter(first)
+        library.saveChapter(second)
+        library.saveContent(first, "第一章正文")
+        library.saveContent(second, "第二章正文")
+        val model = ReaderModel(library, "book-bookmarks")
+        val bookmark = CoreBookmark(
+            time = 10L,
+            bookName = "书",
+            bookAuthor = "作者",
+            chapterIndex = 1,
+            chapterPos = 17,
+            chapterName = "第二章",
+            bookText = "第二章正文",
+            content = "回看这里"
+        )
+        library.saveBookmark(bookmark)
+
+        assertEquals(listOf(bookmark), model.bookmarks())
+        assertTrue(model.openBookmark(bookmark))
+        assertEquals("第二章", model.currentChapter.title)
+        assertEquals(17, model.currentPosition)
     }
 }

@@ -1,9 +1,15 @@
 package io.legado.desktop.persistence
 
 import io.legado.core.library.CoreBook
+import io.legado.core.library.CoreBookGroup
 import io.legado.core.library.CoreBookSource
+import io.legado.core.library.CoreBookmark
 import io.legado.core.library.CoreChapter
 import io.legado.core.library.CoreLibrary
+import io.legado.core.library.CoreReadRecord
+import io.legado.core.library.CoreReaderPageMode
+import io.legado.core.library.CoreReaderSettings
+import io.legado.core.library.CoreReaderTheme
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.Connection
@@ -22,6 +28,7 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
         connection.createStatement().use { statement ->
             statement.execute("PRAGMA foreign_keys = ON")
             createSchema(statement)
+            seedStandardGroups(statement)
         }
     }
 
@@ -68,6 +75,13 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
         }
     }
 
+    override fun deleteSource(bookSourceUrl: String) {
+        connection.prepareStatement("DELETE FROM book_sources WHERE bookSourceUrl = ?").use { statement ->
+            statement.setString(1, bookSourceUrl)
+            statement.executeUpdate()
+        }
+    }
+
     override fun chapters(bookUrl: String): List<CoreChapter> = queryList(
         "SELECT * FROM chapters WHERE bookUrl = ? ORDER BY `index`, rowid",
         bind = { statement -> statement.setString(1, bookUrl) },
@@ -95,6 +109,85 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
             statement.setString(1, chapter.bookUrl)
             statement.setString(2, chapter.url)
             statement.setString(3, content)
+            statement.executeUpdate()
+        }
+    }
+
+    override fun groups(): List<CoreBookGroup> = queryList(
+        "SELECT * FROM book_groups ORDER BY `order`, groupId",
+        mapper = ::readGroup
+    )
+
+    override fun saveGroup(group: CoreBookGroup) {
+        connection.prepareStatement(GROUP_UPSERT).use { statement ->
+            bindGroup(statement, group)
+            statement.executeUpdate()
+        }
+    }
+
+    override fun deleteGroup(groupId: Long) {
+        connection.prepareStatement("DELETE FROM book_groups WHERE groupId = ?").use { statement ->
+            statement.setLong(1, groupId)
+            statement.executeUpdate()
+        }
+    }
+
+    override fun bookmarks(bookName: String, bookAuthor: String): List<CoreBookmark> = queryList(
+        "SELECT * FROM bookmarks WHERE bookName = ? AND bookAuthor = ? ORDER BY time DESC",
+        bind = { statement ->
+            statement.setString(1, bookName)
+            statement.setString(2, bookAuthor)
+        },
+        mapper = ::readBookmark
+    )
+
+    override fun saveBookmark(bookmark: CoreBookmark) {
+        connection.prepareStatement(BOOKMARK_UPSERT).use { statement ->
+            bindBookmark(statement, bookmark)
+            statement.executeUpdate()
+        }
+    }
+
+    override fun deleteBookmark(time: Long) {
+        connection.prepareStatement("DELETE FROM bookmarks WHERE time = ?").use { statement ->
+            statement.setLong(1, time)
+            statement.executeUpdate()
+        }
+    }
+
+    override fun readRecords(): List<CoreReadRecord> = queryList(
+        "SELECT * FROM readRecord ORDER BY day, startSec",
+        mapper = ::readRecord
+    )
+
+    override fun saveReadRecord(record: CoreReadRecord) {
+        connection.prepareStatement(READ_RECORD_UPSERT).use { statement ->
+            bindReadRecord(statement, record)
+            statement.executeUpdate()
+        }
+    }
+
+    override fun deleteReadRecords(bookName: String) {
+        connection.prepareStatement("DELETE FROM readRecord WHERE bookName = ?").use { statement ->
+            statement.setString(1, bookName)
+            statement.executeUpdate()
+        }
+    }
+
+    override fun readerSettings(): CoreReaderSettings = queryOne(
+        sql = "SELECT * FROM desktop_settings WHERE id = 1",
+        bind = {},
+        mapper = ::readReaderSettings
+    ) ?: CoreReaderSettings()
+
+    override fun saveReaderSettings(settings: CoreReaderSettings) {
+        connection.prepareStatement(READER_SETTINGS_UPSERT).use { statement ->
+            statement.setInt(1, 1)
+            statement.setInt(2, settings.textSize)
+            statement.setInt(3, settings.lineSpacingExtra)
+            statement.setString(4, settings.theme.name)
+            statement.setString(5, settings.pageMode.name)
+            statement.setBooleanAsInteger(6, settings.autoRead)
             statement.executeUpdate()
         }
     }
@@ -144,6 +237,56 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
         )
         statement.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS index_books_name_author ON books(name, author)"
+        )
+        statement.execute(
+            """
+            CREATE TABLE IF NOT EXISTS book_groups (
+                groupId INTEGER NOT NULL PRIMARY KEY,
+                groupName TEXT NOT NULL DEFAULT '',
+                cover TEXT,
+                `order` INTEGER NOT NULL DEFAULT 0,
+                enableRefresh INTEGER NOT NULL DEFAULT 1,
+                show INTEGER NOT NULL DEFAULT 1,
+                bookSort INTEGER NOT NULL DEFAULT -1
+            )
+            """.trimIndent()
+        )
+        statement.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                time INTEGER NOT NULL PRIMARY KEY,
+                bookName TEXT NOT NULL DEFAULT '',
+                bookAuthor TEXT NOT NULL DEFAULT '',
+                chapterIndex INTEGER NOT NULL DEFAULT 0,
+                chapterPos INTEGER NOT NULL DEFAULT 0,
+                chapterName TEXT NOT NULL DEFAULT '',
+                bookText TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
+        statement.execute(
+            """
+            CREATE TABLE IF NOT EXISTS readRecord (
+                bookName TEXT NOT NULL,
+                day INTEGER NOT NULL,
+                startSec INTEGER NOT NULL,
+                endSec INTEGER NOT NULL,
+                PRIMARY KEY(bookName, day, startSec)
+            )
+            """.trimIndent()
+        )
+        statement.execute(
+            """
+            CREATE TABLE IF NOT EXISTS desktop_settings (
+                id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+                textSize INTEGER NOT NULL,
+                lineSpacingExtra INTEGER NOT NULL,
+                theme TEXT NOT NULL,
+                pageMode TEXT NOT NULL,
+                autoRead INTEGER NOT NULL
+            )
+            """.trimIndent()
         )
         statement.execute(
             """
@@ -219,6 +362,27 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
             )
             """.trimIndent()
         )
+    }
+
+    private fun seedStandardGroups(statement: java.sql.Statement) {
+        val groups = listOf(
+            CoreBookGroup(groupId = -1L, groupName = "全部", order = -10),
+            CoreBookGroup(groupId = -2L, groupName = "本地", order = -9, enableRefresh = false),
+            CoreBookGroup(groupId = -4L, groupName = "未分组", order = -7),
+            CoreBookGroup(groupId = -11L, groupName = "更新失败", order = -1)
+        )
+        connection.prepareStatement(
+            """
+            INSERT OR IGNORE INTO book_groups(
+                groupId, groupName, cover, `order`, enableRefresh, show, bookSort
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent()
+        ).use { insert ->
+            groups.forEach { group ->
+                bindGroup(insert, group)
+                insert.executeUpdate()
+            }
+        }
     }
 
     private fun bindBook(statement: PreparedStatement, book: CoreBook) {
@@ -309,6 +473,34 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
         statement.setNullableString(15, chapter.variable)
     }
 
+    private fun bindGroup(statement: PreparedStatement, group: CoreBookGroup) {
+        statement.setLong(1, group.groupId)
+        statement.setString(2, group.groupName)
+        statement.setNullableString(3, group.cover)
+        statement.setInt(4, group.order)
+        statement.setBooleanAsInteger(5, group.enableRefresh)
+        statement.setBooleanAsInteger(6, group.show)
+        statement.setInt(7, group.bookSort)
+    }
+
+    private fun bindBookmark(statement: PreparedStatement, bookmark: CoreBookmark) {
+        statement.setLong(1, bookmark.time)
+        statement.setString(2, bookmark.bookName)
+        statement.setString(3, bookmark.bookAuthor)
+        statement.setInt(4, bookmark.chapterIndex)
+        statement.setInt(5, bookmark.chapterPos)
+        statement.setString(6, bookmark.chapterName)
+        statement.setString(7, bookmark.bookText)
+        statement.setString(8, bookmark.content)
+    }
+
+    private fun bindReadRecord(statement: PreparedStatement, record: CoreReadRecord) {
+        statement.setString(1, record.bookName)
+        statement.setInt(2, record.day)
+        statement.setLong(3, record.startSec)
+        statement.setLong(4, record.endSec)
+    }
+
     private fun readBook(resultSet: ResultSet) = CoreBook(
         bookUrl = resultSet.getString("bookUrl"),
         tocUrl = resultSet.getString("tocUrl"),
@@ -397,6 +589,42 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
         endFragmentId = resultSet.getString("endFragmentId")
     )
 
+    private fun readGroup(resultSet: ResultSet) = CoreBookGroup(
+        groupId = resultSet.getLong("groupId"),
+        groupName = resultSet.getString("groupName"),
+        cover = resultSet.getString("cover"),
+        order = resultSet.getInt("order"),
+        enableRefresh = resultSet.getBooleanAsInteger("enableRefresh"),
+        show = resultSet.getBooleanAsInteger("show"),
+        bookSort = resultSet.getInt("bookSort")
+    )
+
+    private fun readBookmark(resultSet: ResultSet) = CoreBookmark(
+        time = resultSet.getLong("time"),
+        bookName = resultSet.getString("bookName"),
+        bookAuthor = resultSet.getString("bookAuthor"),
+        chapterIndex = resultSet.getInt("chapterIndex"),
+        chapterPos = resultSet.getInt("chapterPos"),
+        chapterName = resultSet.getString("chapterName"),
+        bookText = resultSet.getString("bookText"),
+        content = resultSet.getString("content")
+    )
+
+    private fun readRecord(resultSet: ResultSet) = CoreReadRecord(
+        bookName = resultSet.getString("bookName"),
+        day = resultSet.getInt("day"),
+        startSec = resultSet.getLong("startSec"),
+        endSec = resultSet.getLong("endSec")
+    )
+
+    private fun readReaderSettings(resultSet: ResultSet) = CoreReaderSettings(
+        textSize = resultSet.getInt("textSize"),
+        lineSpacingExtra = resultSet.getInt("lineSpacingExtra"),
+        theme = resultSet.getString("theme").toCoreReaderTheme(),
+        pageMode = resultSet.getString("pageMode").toCoreReaderPageMode(),
+        autoRead = resultSet.getBooleanAsInteger("autoRead")
+    )
+
     private fun <T> queryList(
         sql: String,
         bind: (PreparedStatement) -> Unit = {},
@@ -444,6 +672,12 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
 
     private fun ResultSet.getNullableLong(column: String): Long? =
         getLong(column).let { if (wasNull()) null else it }
+
+    private fun String?.toCoreReaderTheme(): CoreReaderTheme =
+        runCatching { CoreReaderTheme.valueOf(this.orEmpty()) }.getOrDefault(CoreReaderTheme.DAY)
+
+    private fun String?.toCoreReaderPageMode(): CoreReaderPageMode =
+        runCatching { CoreReaderPageMode.valueOf(this.orEmpty()) }.getOrDefault(CoreReaderPageMode.SCROLL)
 
     private companion object {
         const val BOOK_UPSERT = """
@@ -512,6 +746,39 @@ class SqliteCoreLibrary(databasePath: Path) : CoreLibrary, AutoCloseable {
             INSERT INTO chapter_contents (bookUrl, chapterUrl, content)
             VALUES (?, ?, ?)
             ON CONFLICT(bookUrl, chapterUrl) DO UPDATE SET content = excluded.content
+        """
+        const val GROUP_UPSERT = """
+            INSERT INTO book_groups(
+                groupId, groupName, cover, `order`, enableRefresh, show, bookSort
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(groupId) DO UPDATE SET
+                groupName = excluded.groupName, cover = excluded.cover,
+                `order` = excluded.`order`, enableRefresh = excluded.enableRefresh,
+                show = excluded.show, bookSort = excluded.bookSort
+        """
+        const val BOOKMARK_UPSERT = """
+            INSERT INTO bookmarks(
+                time, bookName, bookAuthor, chapterIndex, chapterPos,
+                chapterName, bookText, content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(time) DO UPDATE SET
+                bookName = excluded.bookName, bookAuthor = excluded.bookAuthor,
+                chapterIndex = excluded.chapterIndex, chapterPos = excluded.chapterPos,
+                chapterName = excluded.chapterName, bookText = excluded.bookText,
+                content = excluded.content
+        """
+        const val READ_RECORD_UPSERT = """
+            INSERT INTO readRecord(bookName, day, startSec, endSec)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(bookName, day, startSec) DO UPDATE SET endSec = excluded.endSec
+        """
+        const val READER_SETTINGS_UPSERT = """
+            INSERT INTO desktop_settings(id, textSize, lineSpacingExtra, theme, pageMode, autoRead)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                textSize = excluded.textSize, lineSpacingExtra = excluded.lineSpacingExtra,
+                theme = excluded.theme, pageMode = excluded.pageMode,
+                autoRead = excluded.autoRead
         """
     }
 }
