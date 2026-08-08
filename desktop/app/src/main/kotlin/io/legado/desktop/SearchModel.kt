@@ -3,6 +3,8 @@ package io.legado.desktop
 import io.legado.core.library.CoreLibrary
 import io.legado.core.source.BookSourceSearchService
 import io.legado.core.source.CoreSearchResult
+import io.legado.core.source.CoreSourceSessionException
+import io.legado.core.source.CoreSourceSessionStatus
 
 class SearchModel(
     private val library: CoreLibrary,
@@ -18,6 +20,15 @@ class SearchModel(
         private set
 
     var error: String? = null
+        private set
+
+    var sessionStatus: CoreSourceSessionStatus? = null
+        private set
+
+    var loginUrl: String? = null
+        private set
+
+    var loginSourceUrl: String? = null
         private set
 
     var isSearching: Boolean = false
@@ -36,12 +47,20 @@ class SearchModel(
         }
         isSearching = true
         error = null
+        sessionStatus = null
+        loginUrl = null
+        loginSourceUrl = null
         try {
             this.page = page.coerceAtLeast(1)
             results = service.search(keyword, this.page)
         } catch (throwable: Throwable) {
             results = emptyList()
             error = throwable.message ?: "搜索失败"
+            if (throwable is CoreSourceSessionException) {
+                sessionStatus = throwable.status
+                loginUrl = throwable.loginUrl
+                loginSourceUrl = throwable.sourceUrl
+            }
         } finally {
             isSearching = false
         }

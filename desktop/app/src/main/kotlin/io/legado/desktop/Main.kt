@@ -676,6 +676,7 @@ private fun AppShell(
             )
             AppRoute.SEARCH -> SearchScreen(
                 model = searchModel,
+                sourceModel = sourceModel,
                 onBookshelfChanged = onBookshelfChanged,
                 onOpenDetail = onOpenDetail
             )
@@ -687,6 +688,7 @@ private fun AppShell(
             AppRoute.BOOK_DETAIL -> selectedBook?.let { book ->
                 BookDetailScreen(
                     model = detailModel,
+                    sourceModel = sourceModel,
                     initialBook = book,
                     library = library,
                     downloadModel = chapterDownloadModel,
@@ -828,6 +830,7 @@ private fun AppShell(
                         },
                         settingsModel = readerSettingsModel,
                         dictionaryModel = remember { ReaderDictionaryModel(library, httpClient) },
+                        sourceModel = sourceModel,
                         onBack = onCloseReader,
                         onBackLabel = readerReturnLabel
                     )
@@ -1421,6 +1424,7 @@ private fun BookTile(
 @OptIn(ExperimentalMaterial3Api::class)
 private fun SearchScreen(
     model: SearchModel,
+    sourceModel: SourceModel,
     onBookshelfChanged: () -> Unit,
     onOpenDetail: (CoreBook) -> Unit
 ) {
@@ -1482,7 +1486,32 @@ private fun SearchScreen(
             Spacer(Modifier.height(18.dp))
             when {
                 searching -> SearchEmptyState("正在搜索书源")
-                model.error != null -> SearchEmptyState(model.error!!)
+                model.error != null -> Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(model.error!!, style = MaterialTheme.typography.bodyLarge)
+                    if (model.sessionStatus == io.legado.core.source.CoreSourceSessionStatus.LOGIN_REQUIRED &&
+                        model.loginUrl != null && model.loginSourceUrl != null
+                    ) {
+                        Button(onClick = {
+                            runCatching {
+                                sourceModel.openEmbeddedBrowserVerification(
+                                    url = model.loginUrl!!,
+                                    sourceUrl = model.loginSourceUrl!!,
+                                    title = "书源登录"
+                                )
+                            }.onSuccess {
+                                feedback = "已打开内置浏览器，请完成登录后重新搜索"
+                            }.onFailure { error ->
+                                feedback = error.message ?: "打开重新登录失败"
+                            }
+                        }) {
+                            Text("重新登录")
+                        }
+                    }
+                }
                 results.isEmpty() -> SearchEmptyState(
                     if (query.isBlank()) "输入关键词开始搜索" else "没有找到匹配的书籍"
                 )
@@ -2780,6 +2809,7 @@ private fun sourceNameFromJson(json: String): String = runCatching {
 @OptIn(ExperimentalMaterial3Api::class)
 private fun BookDetailScreen(
     model: BookDetailModel,
+    sourceModel: SourceModel,
     initialBook: CoreBook,
     library: CoreLibrary,
     downloadModel: ChapterDownloadModel,
@@ -2934,6 +2964,24 @@ private fun BookDetailScreen(
                         revision++
                     }
                 }) { Text("重试") }
+                if (model.sessionStatus == io.legado.core.source.CoreSourceSessionStatus.LOGIN_REQUIRED &&
+                    model.loginUrl != null && model.loginSourceUrl != null
+                ) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = {
+                        runCatching {
+                            sourceModel.openEmbeddedBrowserVerification(
+                                url = model.loginUrl!!,
+                                sourceUrl = model.loginSourceUrl!!,
+                                title = book.originName.ifBlank { "书源登录" }
+                            )
+                        }.onSuccess {
+                            feedback = "已打开内置浏览器，请完成登录后重试"
+                        }.onFailure { error ->
+                            feedback = error.message ?: "打开重新登录失败"
+                        }
+                    }) { Text("重新登录") }
+                }
             }
             Spacer(Modifier.height(18.dp))
             Text("目录", style = MaterialTheme.typography.titleLarge)
@@ -5400,6 +5448,7 @@ private fun ReaderScreen(
     model: ReaderModel,
     settingsModel: ReaderSettingsModel,
     dictionaryModel: ReaderDictionaryModel,
+    sourceModel: SourceModel,
     onBack: () -> Unit,
     onBackLabel: String = "返回书架"
 ) {
@@ -5749,20 +5798,36 @@ private fun ReaderScreen(
                     when {
                         model.isLoading -> Text("正在加载正文")
                         model.error != null -> {
-                            Text(model.error!!, color = MaterialTheme.colorScheme.error)
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = {
-                                val targetChapter = model.currentChapter
-                                scope.launch {
-                                    val loaded = withContext(Dispatchers.IO) {
-                                        model.loadContent(targetChapter)
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(model.error!!, color = MaterialTheme.colorScheme.error)
+                                Button(onClick = {
+                                    val targetChapter = model.currentChapter
+                                    scope.launch {
+                                        val loaded = withContext(Dispatchers.IO) {
+                                            model.loadContent(targetChapter)
+                                        }
+                                        if (loaded && model.currentChapter.url == targetChapter.url) {
+                                            loadedChapterUrl = targetChapter.url
+                                        }
+                                        revision++
                                     }
-                                    if (loaded && model.currentChapter.url == targetChapter.url) {
-                                        loadedChapterUrl = targetChapter.url
-                                    }
-                                    revision++
+                                }) { Text("重试") }
+                                if (model.sessionStatus == io.legado.core.source.CoreSourceSessionStatus.LOGIN_REQUIRED &&
+                                    model.loginUrl != null && model.loginSourceUrl != null
+                                ) {
+                                    Button(onClick = {
+                                        runCatching {
+                                            sourceModel.openEmbeddedBrowserVerification(
+                                                url = model.loginUrl!!,
+                                                sourceUrl = model.loginSourceUrl!!,
+                                                title = "书源登录"
+                                            )
+                                        }.onFailure { error ->
+                                            readAloudError = error.message ?: "打开重新登录失败"
+                                        }
+                                    }) { Text("重新登录") }
                                 }
-                            }) { Text("重试") }
+                            }
                         }
                         else -> SelectionContainer {
                             Text(

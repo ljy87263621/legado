@@ -1,6 +1,6 @@
 # Source Browser Session Design
 
-**Status:** in progress; request-debug re-login increment implemented
+**Status:** in progress; search, detail, TOC and text-reader re-login increment implemented
 
 **Goal:** Make a desktop source login or verification session reusable by the
 source-aware JVM HTTP requests used for search, book details, TOC refresh and
@@ -80,15 +80,19 @@ object SourceSessionAssessment {
 }
 ```
 
-The classifier is consumed by `SourceDebugModel` and later by online search,
-book details, TOC and content services. Browser UI changes are kept separate
-from this pure request-boundary increment so they can be tested without a
-JavaFX application thread.
+The classifier is consumed by `SourceDebugModel`, online search, book details,
+TOC and text-content services. The core services throw a structured
+`CoreSourceSessionException` containing the source URL and validated login URL;
+desktop search, detail and text-reader models preserve that state for the UI.
 
 When a request debug result is `LOGIN_REQUIRED`, the source editor displays an
 explicit re-login state and uses the final HTTP(S) login URL for the embedded
 browser. Browser completion continues to reuse the existing Cookie capture and
 source-aware refetch path.
+
+Search, book detail/TOC refresh and text reading expose the same explicit
+re-login action when their source request requires authentication. Online image
+reading, discovery and RSS flows remain follow-up integrations.
 
 ## Test and Acceptance Plan
 

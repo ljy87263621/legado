@@ -365,9 +365,9 @@ class BookSourceSearchService(
                 .onFailure(failures::add)
         }
         if (searchableSources.isNotEmpty() && failures.size == searchableSources.size) {
-            throw failures.first().let { error ->
-                IllegalStateException(error.message ?: "所有书源搜索失败", error)
-            }
+            val first = failures.first()
+            if (first is CoreSourceSessionException) throw first
+            throw IllegalStateException(first.message ?: "所有书源搜索失败", first)
         }
         return deduplicate(results)
     }
@@ -400,7 +400,7 @@ class BookSourceSearchService(
             resolved,
             mapOf("page" to page)
         )
-        check(response.statusCode in 200..399) { "订阅源请求失败: HTTP ${response.statusCode}" }
+        CoreSourceSessionAssessment.requireSuccess(response, source.bookSourceUrl, "订阅源请求失败")
         val rule = parseRule(source.ruleExplore ?: error("订阅源缺少发现规则: ${source.bookSourceUrl}"))
         val baseUrl = response.url.ifBlank { resolved.requestUrl }
         val records = when {
@@ -426,7 +426,7 @@ class BookSourceSearchService(
             resolved,
             mapOf("key" to keyword, "keyword" to keyword, "page" to page)
         )
-        check(response.statusCode in 200..399) { "书源请求失败: HTTP ${response.statusCode}" }
+        CoreSourceSessionAssessment.requireSuccess(response, source.bookSourceUrl, "书源请求失败")
         val rule = parseRule(source.ruleSearch!!)
         val baseUrl = response.url.ifBlank { resolved.requestUrl }
         val records = when {

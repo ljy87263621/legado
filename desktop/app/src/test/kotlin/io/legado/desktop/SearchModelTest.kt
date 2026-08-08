@@ -4,6 +4,7 @@ import io.legado.core.library.CoreBookSource
 import io.legado.core.library.InMemoryCoreLibrary
 import io.legado.core.source.CoreHttpClient
 import io.legado.core.source.CoreHttpResponse
+import io.legado.core.source.CoreSourceSessionStatus
 import io.legado.core.source.BookSourceSearchService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -66,6 +67,33 @@ class SearchModelTest {
 
         assertEquals("连接失败", model.error)
         assertTrue(model.results.isEmpty())
+    }
+
+    @Test
+    fun searchModelExposesLoginUrlWhenTheSourceSessionExpires() {
+        val library = InMemoryCoreLibrary()
+        library.saveSource(
+            CoreBookSource(
+                bookSourceUrl = "https://source.example",
+                bookSourceName = "示例源",
+                searchUrl = "https://source.example/search?q={{key}}",
+                ruleSearch = "{\"bookList\":\".book\",\"name\":\"h2\",\"bookUrl\":\"a@href\"}"
+            )
+        )
+        val client = object : CoreHttpClient {
+            override fun get(url: String, headers: Map<String, String>): CoreHttpResponse = CoreHttpResponse(
+                url = "https://source.example/login",
+                body = "",
+                statusCode = 401
+            )
+        }
+        val model = SearchModel(library, BookSourceSearchService(library, client))
+
+        model.setQuery("星河")
+        model.search()
+
+        assertEquals(CoreSourceSessionStatus.LOGIN_REQUIRED, model.sessionStatus)
+        assertEquals("https://source.example/login", model.loginUrl)
     }
 
     private class FakeHttpClient : CoreHttpClient {

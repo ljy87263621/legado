@@ -7,6 +7,7 @@ import io.legado.core.source.CoreHttpClient
 import io.legado.core.source.CoreHttpResponse
 import io.legado.core.source.BookSourceSearchService
 import io.legado.core.source.OnlineBookService
+import io.legado.core.source.CoreSourceSessionStatus
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -63,6 +64,29 @@ class BookDetailModelTest {
 
         assertEquals("连接失败", model.error)
         assertTrue(model.chapters.isEmpty())
+    }
+
+    @Test
+    fun detailModelExposesLoginUrlWhenTheSourceSessionExpires() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://source.example",
+            ruleBookInfo = "{\"name\":\"h1\"}"
+        )
+        val book = CoreBook("https://source.example/book/1", origin = source.bookSourceUrl)
+        library.saveSource(source)
+        val model = BookDetailModel(
+            library,
+            OnlineBookService(library, object : CoreHttpClient {
+                override fun get(url: String, headers: Map<String, String>): CoreHttpResponse =
+                    CoreHttpResponse("https://source.example/login", "", 401)
+            })
+        )
+
+        model.open(book)
+
+        assertEquals(CoreSourceSessionStatus.LOGIN_REQUIRED, model.sessionStatus)
+        assertEquals("https://source.example/login", model.loginUrl)
     }
 
     @Test

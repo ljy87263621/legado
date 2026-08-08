@@ -6,6 +6,8 @@ import io.legado.core.library.CoreLibrary
 import io.legado.core.source.BookSourceSearchService
 import io.legado.core.source.CoreSearchResult
 import io.legado.core.source.OnlineBookService
+import io.legado.core.source.CoreSourceSessionException
+import io.legado.core.source.CoreSourceSessionStatus
 
 data class BookSourceCandidate(
     val book: CoreBook,
@@ -26,6 +28,15 @@ class BookDetailModel(
     var error: String? = null
         private set
 
+    var sessionStatus: CoreSourceSessionStatus? = null
+        private set
+
+    var loginUrl: String? = null
+        private set
+
+    var loginSourceUrl: String? = null
+        private set
+
     var isLoading: Boolean = false
         private set
 
@@ -41,6 +52,9 @@ class BookDetailModel(
         sourceCandidates = emptyList()
         sourceError = null
         error = null
+        sessionStatus = null
+        loginUrl = null
+        loginSourceUrl = null
         isLoading = true
         try {
             val updatedBook = service.loadBookInfo(book)
@@ -49,6 +63,7 @@ class BookDetailModel(
             this.book = library.book(updatedBook.bookUrl) ?: updatedBook
         } catch (throwable: Throwable) {
             error = throwable.message ?: "书籍详情加载失败"
+            captureSessionFailure(throwable)
         } finally {
             isLoading = false
         }
@@ -57,12 +72,16 @@ class BookDetailModel(
     fun refreshChapters() {
         val currentBook = book ?: return
         error = null
+        sessionStatus = null
+        loginUrl = null
+        loginSourceUrl = null
         isLoading = true
         try {
             chapters = service.refreshChapters(currentBook)
             book = library.book(currentBook.bookUrl) ?: currentBook
         } catch (throwable: Throwable) {
             error = throwable.message ?: "目录加载失败"
+            captureSessionFailure(throwable)
         } finally {
             isLoading = false
         }
@@ -143,6 +162,7 @@ class BookDetailModel(
                 library.deleteBook(replacement.bookUrl)
             }
             sourceError = throwable.message ?: "切换书源失败"
+            captureSessionFailure(throwable)
             null
         }
     }
@@ -159,4 +179,12 @@ class BookDetailModel(
         .trim()
         .replace(Regex("\\s+"), "")
         .lowercase()
+
+    private fun captureSessionFailure(throwable: Throwable) {
+        if (throwable is CoreSourceSessionException) {
+            sessionStatus = throwable.status
+            loginUrl = throwable.loginUrl
+            loginSourceUrl = throwable.sourceUrl
+        }
+    }
 }

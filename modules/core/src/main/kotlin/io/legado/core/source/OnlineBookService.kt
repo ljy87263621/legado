@@ -307,8 +307,7 @@ class OnlineBookService(
         } else {
             httpClient.request(request)
         }
-        check(response.statusCode in 200..399) { "书源请求失败: HTTP ${response.statusCode}" }
-        return response
+        return CoreSourceSessionAssessment.requireSuccess(response, source.bookSourceUrl, "书源请求失败")
     }
 
     private fun records(rule: String, body: String): List<Any> {

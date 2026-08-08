@@ -9,6 +9,7 @@ import io.legado.core.library.CoreReadRecord
 import io.legado.core.source.CoreHttpClient
 import io.legado.core.source.CoreHttpResponse
 import io.legado.core.source.OnlineBookService
+import io.legado.core.source.CoreSourceSessionStatus
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,6 +17,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderModelTest {
+
+    @Test
+    fun readerExposesLoginUrlWhenOnlineContentRequiresAuthentication() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://source.example",
+            ruleContent = "{\"content\":\".content\"}"
+        )
+        val book = CoreBook("https://source.example/book", origin = source.bookSourceUrl)
+        val chapter = CoreChapter(book.bookUrl, "https://source.example/chapter", "第一章", 0)
+        library.saveSource(source)
+        library.saveBook(book)
+        library.saveChapter(chapter)
+        val reader = ReaderModel(
+            library,
+            book.bookUrl,
+            OnlineBookService(library, object : CoreHttpClient {
+                override fun get(url: String, headers: Map<String, String>): CoreHttpResponse =
+                    CoreHttpResponse("https://source.example/login", "", 401)
+            })
+        )
+
+        assertFalse(reader.loadCurrentContent())
+        assertEquals(CoreSourceSessionStatus.LOGIN_REQUIRED, reader.sessionStatus)
+        assertEquals("https://source.example/login", reader.loginUrl)
+        assertEquals(source.bookSourceUrl, reader.loginSourceUrl)
+    }
 
     @Test
     fun readerLoadsMissingContentThroughOnlineService() {

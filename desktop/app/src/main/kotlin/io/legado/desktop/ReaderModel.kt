@@ -6,6 +6,8 @@ import io.legado.core.library.CoreLibrary
 import io.legado.core.library.CoreReadRecord
 import io.legado.core.library.CoreReplacementService
 import io.legado.core.source.OnlineBookService
+import io.legado.core.source.CoreSourceSessionException
+import io.legado.core.source.CoreSourceSessionStatus
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -78,6 +80,15 @@ class ReaderModel(
     var error: String? = null
         private set
 
+    var sessionStatus: CoreSourceSessionStatus? = null
+        private set
+
+    var loginUrl: String? = null
+        private set
+
+    var loginSourceUrl: String? = null
+        private set
+
     var isLoading: Boolean = false
         private set
 
@@ -124,11 +135,19 @@ class ReaderModel(
         }
         isLoading = true
         error = null
+        sessionStatus = null
+        loginUrl = null
+        loginSourceUrl = null
         return try {
             service.loadContent(book, chapter)
             true
         } catch (throwable: Throwable) {
             error = throwable.message ?: "正文加载失败"
+            if (throwable is CoreSourceSessionException) {
+                sessionStatus = throwable.status
+                loginUrl = throwable.loginUrl
+                loginSourceUrl = throwable.sourceUrl
+            }
             false
         } finally {
             isLoading = false
