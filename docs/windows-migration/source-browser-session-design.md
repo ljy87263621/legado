@@ -2,6 +2,10 @@
 
 **Status:** in progress; search, detail, TOC and text-reader re-login increment implemented
 
+The next executable round is tracked in
+`online-source-session-next-round-plan.md` and covers online image reading,
+discovery, and RSS one workflow at a time.
+
 **Goal:** Make a desktop source login or verification session reusable by the
 source-aware JVM HTTP requests used for search, book details, TOC refresh and
 content loading.

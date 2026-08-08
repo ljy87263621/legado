@@ -52,6 +52,10 @@ then connect the existing JavaFX Cookie capture to source requests and expose
 an explicit re-login path. Detailed interfaces and acceptance criteria live in
 `source-browser-session-design.md`.
 
+The next round is staged in `online-source-session-next-round-plan.md`: online
+image reading first, then discovery, then RSS, each with its own focused tests
+and commit gate.
+
 ## Verified Windows Evidence
 
 - Portable packaging: `desktop/packaging/windows/portable.ps1` checks the jpackage directory, bundled JVM (`runtime/bin/server/jvm.dll`), application JARs and launcher metadata, then starts the packaged executable with an isolated `LEGADO_DATA_DIR` and waits for `legado.db`.
