@@ -52,9 +52,10 @@ then connect the existing JavaFX Cookie capture to source requests and expose
 an explicit re-login path. Detailed interfaces and acceptance criteria live in
 `source-browser-session-design.md`.
 
-The next round is staged in `online-source-session-next-round-plan.md`: online
-image reading first, then discovery, then RSS, each with its own focused tests
-and commit gate.
+The next round is staged in `online-source-session-next-round-plan.md`. Online
+image reading re-login is now implemented and regression-tested; discovery is
+the next target, followed by RSS, each with its own focused tests and commit
+gate.
 
 ## Verified Windows Evidence
 

@@ -8,6 +8,9 @@ import io.legado.core.source.CoreHttpClient
 import io.legado.core.source.CoreHttpRequest
 import io.legado.core.source.CoreHttpResponse
 import io.legado.core.source.CoreSourceAwareHttpClient
+import io.legado.core.source.CoreSourceSessionAssessment
+import io.legado.core.source.CoreSourceSessionException
+import io.legado.core.source.CoreSourceSessionStatus
 import io.legado.core.source.CoreUrlRuleSupport
 import io.legado.core.source.OnlineBookService
 import org.jsoup.Jsoup
@@ -98,6 +101,15 @@ class OnlineImageReaderModel(
     private var pages: List<OnlineImagePage> = emptyList()
     private val memoryCache = mutableMapOf<String, ByteArray>()
 
+    var sessionStatus: CoreSourceSessionStatus? = null
+        private set
+
+    var loginUrl: String? = null
+        private set
+
+    var loginSourceUrl: String? = null
+        private set
+
     val currentChapter: CoreChapter
         get() = chapters[chapterIndex]
 
@@ -120,9 +132,13 @@ class OnlineImageReaderModel(
         get() = chapterIndex < chapters.lastIndex
 
     fun loadCurrentChapter(): Boolean {
+        clearSessionState()
         val content = runCatching {
             onlineService.loadContent(book, currentChapter)
-        }.getOrElse { return false }
+        }.getOrElse { throwable ->
+            captureSessionFailure(throwable)
+            return false
+        }
         pages = OnlineImagePageParser.parse(content, currentChapter.url)
             .mapIndexed { index, url -> OnlineImagePage(url, chapterIndex, index) }
         if (pages.isEmpty()) return false
@@ -187,8 +203,13 @@ class OnlineImageReaderModel(
         } else {
             httpClient.request(request)
         }
-        require(response.statusCode in 200..299) { "图片请求失败：HTTP ${response.statusCode}" }
-        val bytes = response.bodyBytes ?: response.body.toByteArray(Charsets.ISO_8859_1)
+        val successfulResponse = try {
+            CoreSourceSessionAssessment.requireSuccess(response, source.bookSourceUrl, "图片请求失败")
+        } catch (throwable: Throwable) {
+            captureSessionFailure(throwable)
+            throw throwable
+        }
+        val bytes = successfulResponse.bodyBytes ?: successfulResponse.body.toByteArray(Charsets.ISO_8859_1)
         Files.createDirectories(cacheDirectory)
         Files.write(cacheFile, bytes)
         memoryCache[page.url] = bytes
@@ -198,4 +219,18 @@ class OnlineImageReaderModel(
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { byte -> "%02x".format(byte) }
+
+    private fun clearSessionState() {
+        sessionStatus = null
+        loginUrl = null
+        loginSourceUrl = null
+    }
+
+    private fun captureSessionFailure(throwable: Throwable) {
+        if (throwable is CoreSourceSessionException) {
+            sessionStatus = throwable.status
+            loginUrl = throwable.loginUrl
+            loginSourceUrl = throwable.sourceUrl
+        }
+    }
 }

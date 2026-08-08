@@ -8,6 +8,7 @@ import io.legado.core.library.InMemoryCoreLibrary
 import io.legado.core.source.CoreHttpClient
 import io.legado.core.source.CoreHttpRequest
 import io.legado.core.source.CoreHttpResponse
+import io.legado.core.source.CoreSourceSessionStatus
 import io.legado.core.source.OnlineBookService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,6 +16,85 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OnlineImageReaderModelTest {
+
+    @Test
+    fun exposesLoginUrlWhenOnlineImageChapterRequiresAuthentication() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://manga.example",
+            bookSourceName = "漫画源",
+            bookSourceType = CoreBookSourceType.IMAGE,
+            ruleContent = "{\"content\":\".pages\"}"
+        )
+        val book = CoreBook(
+            bookUrl = "https://manga.example/book/1",
+            origin = source.bookSourceUrl,
+            type = DesktopBookType.ONLINE_IMAGE
+        )
+        val chapter = CoreChapter(book.bookUrl, "https://manga.example/chapter/1", "第一话", 0)
+        library.saveSource(source)
+        library.saveBook(book)
+        library.saveChapter(chapter)
+        val client = object : CoreHttpClient {
+            override fun get(url: String, headers: Map<String, String>): CoreHttpResponse =
+                CoreHttpResponse("https://manga.example/login", "", 401)
+        }
+        val reader = OnlineImageReaderModel(
+            library = library,
+            bookUrl = book.bookUrl,
+            onlineService = OnlineBookService(library, client),
+            httpClient = client,
+            cacheDirectory = java.nio.file.Files.createTempDirectory("legado-online-image-login")
+        )
+
+        assertFalse(reader.loadCurrentChapter())
+        assertEquals(CoreSourceSessionStatus.LOGIN_REQUIRED, reader.sessionStatus)
+        assertEquals("https://manga.example/login", reader.loginUrl)
+        assertEquals(source.bookSourceUrl, reader.loginSourceUrl)
+    }
+
+    @Test
+    fun exposesLoginUrlWhenOnlineImagePageRequiresAuthentication() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://manga.example",
+            bookSourceName = "漫画源",
+            bookSourceType = CoreBookSourceType.IMAGE,
+            ruleContent = "{\"content\":\".pages\"}"
+        )
+        val book = CoreBook(
+            bookUrl = "https://manga.example/book/1",
+            origin = source.bookSourceUrl,
+            type = DesktopBookType.ONLINE_IMAGE
+        )
+        val chapter = CoreChapter(book.bookUrl, "https://manga.example/chapter/1", "第一话", 0)
+        library.saveSource(source)
+        library.saveBook(book)
+        library.saveChapter(chapter)
+        val client = object : CoreHttpClient {
+            override fun get(url: String, headers: Map<String, String>): CoreHttpResponse =
+                CoreHttpResponse(url, "<div class='pages'><img src='/images/1.png'></div>")
+
+            override fun request(request: CoreHttpRequest): CoreHttpResponse = if (request.url == chapter.url) {
+                CoreHttpResponse(request.url, "<div class='pages'><img src='/images/1.png'></div>")
+            } else {
+                CoreHttpResponse("https://manga.example/login", "", 401)
+            }
+        }
+        val reader = OnlineImageReaderModel(
+            library = library,
+            bookUrl = book.bookUrl,
+            onlineService = OnlineBookService(library, client),
+            httpClient = client,
+            cacheDirectory = java.nio.file.Files.createTempDirectory("legado-online-image-page-login")
+        )
+
+        assertTrue(reader.loadCurrentChapter())
+        runCatching { reader.currentPageBytes() }
+        assertEquals(CoreSourceSessionStatus.LOGIN_REQUIRED, reader.sessionStatus)
+        assertEquals("https://manga.example/login", reader.loginUrl)
+        assertEquals(source.bookSourceUrl, reader.loginSourceUrl)
+    }
 
     @Test
     fun loadsImageUrlsFromAnOnlineChapterCachesImagesAndPersistsPageProgress() {

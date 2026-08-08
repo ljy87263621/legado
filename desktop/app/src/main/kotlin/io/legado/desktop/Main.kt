@@ -136,6 +136,7 @@ import io.legado.core.source.BookSourceJsonCodec
 import io.legado.core.source.CoreHttpClient
 import io.legado.core.source.CoreSearchResult
 import io.legado.core.source.CoreSourceHttpClient
+import io.legado.core.source.CoreSourceSessionStatus
 import io.legado.core.source.JavaNetHttpClient
 import io.legado.core.source.OnlineBookService
 import io.legado.desktop.persistence.DesktopDataDirectory
@@ -814,6 +815,7 @@ private fun AppShell(
                                 httpClient = httpClient
                             )
                         },
+                        sourceModel = sourceModel,
                         onBack = onCloseReader,
                         onBackLabel = readerReturnLabel
                     )
@@ -6092,12 +6094,14 @@ private fun ImageReaderScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 private fun OnlineImageReaderScreen(
     model: OnlineImageReaderModel,
+    sourceModel: SourceModel,
     onBack: () -> Unit,
     onBackLabel: String = "返回书架"
 ) {
     var revision by remember { mutableStateOf(0) }
     var image by remember(model.currentPageIndex, revision) { mutableStateOf<ImageBitmap?>(null) }
     var error by remember(model.currentPageIndex, revision) { mutableStateOf<String?>(null) }
+    var feedback by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val verticalScrollState = rememberScrollState()
     val horizontalScrollState = rememberScrollState()
@@ -6198,7 +6202,27 @@ private fun OnlineImageReaderScreen(
                 contentAlignment = Alignment.Center
             ) {
                 when {
-                    error != null -> Text(error!!, color = MaterialTheme.colorScheme.error)
+                    error != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(error!!, color = MaterialTheme.colorScheme.error)
+                        if (model.sessionStatus == CoreSourceSessionStatus.LOGIN_REQUIRED &&
+                            !model.loginUrl.isNullOrBlank() && !model.loginSourceUrl.isNullOrBlank()
+                        ) {
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = {
+                                runCatching {
+                                    sourceModel.openEmbeddedBrowserVerification(
+                                        url = model.loginUrl!!,
+                                        sourceUrl = model.loginSourceUrl!!,
+                                        title = "书源登录"
+                                    )
+                                }.onSuccess {
+                                    feedback = "已打开内置浏览器，请完成登录后重试"
+                                }.onFailure { throwable ->
+                                    feedback = throwable.message ?: "打开重新登录失败"
+                                }
+                            }) { Text("重新登录") }
+                        }
+                    }
                     image == null -> Text("正在加载图片")
                     else -> Image(
                         bitmap = image!!,
@@ -6208,6 +6232,7 @@ private fun OnlineImageReaderScreen(
                     )
                 }
             }
+            feedback?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
