@@ -144,6 +144,24 @@ class WebDavBackupModelTest {
         assertEquals("第一章\n远端正文", Files.readString(downloaded))
     }
 
+    @Test
+    fun deletesRemoteBookThroughTheWebDavDeleteMethod() {
+        val model = WebDavRemoteBookModel(
+            library = InMemoryCoreLibrary(),
+            client = JavaNetWebDavClient(),
+            store = MemoryWebDavConfigStore(),
+            downloadDirectory = tempDirectory.resolve("downloads")
+        )
+        server.put("books/remove.txt", "第一章\n待删除".toByteArray(StandardCharsets.UTF_8))
+
+        assertTrue(model.configure(server.url, "dav-user", "dav-password", "books").isSuccess)
+        val book = model.listBooks().getOrThrow().single()
+
+        val deletion = model.delete(book)
+        assertTrue(deletion.error ?: "WebDAV 删除失败", deletion.isSuccess)
+        assertTrue(model.listBooks().getOrThrow().isEmpty())
+    }
+
     private class MemoryWebDavConfigStore : DesktopWebDavConfigStore {
         var config: DesktopWebDavConfig? = null
 
@@ -203,6 +221,14 @@ class WebDavBackupModelTest {
                         val name = exchange.requestURI.path.substringAfterLast('/')
                         files[name]?.let { respond(exchange, 200, it, "application/zip") }
                             ?: respond(exchange, 404, ByteArray(0), "")
+                    }
+                    "DELETE" -> {
+                        val name = exchange.requestURI.path.substringAfter("/dav/").trimStart('/')
+                        if (files.remove(name) != null) {
+                            respond(exchange, 204, ByteArray(0), "")
+                        } else {
+                            respond(exchange, 404, ByteArray(0), "")
+                        }
                     }
                     else -> respond(exchange, 405, ByteArray(0), "")
                 }

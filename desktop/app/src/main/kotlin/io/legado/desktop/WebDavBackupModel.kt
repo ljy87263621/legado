@@ -36,6 +36,8 @@ interface WebDavClient {
     fun put(config: DesktopWebDavConfig, name: String, content: ByteArray)
 
     fun get(config: DesktopWebDavConfig, name: String): ByteArray
+
+    fun delete(config: DesktopWebDavConfig, name: String)
 }
 
 class JavaNetWebDavClient(
@@ -69,6 +71,11 @@ class JavaNetWebDavClient(
         val response = request(config, "GET", name)
         require(response.status in 200..299) { "WebDAV 下载失败：HTTP ${response.status}" }
         return response.body
+    }
+
+    override fun delete(config: DesktopWebDavConfig, name: String) {
+        val response = request(config, "DELETE", name)
+        require(response.status in 200..299) { "WebDAV 删除失败：HTTP ${response.status}" }
     }
 
     private fun request(
@@ -267,6 +274,17 @@ class WebDavRemoteBookModel(
         Files.write(destination, client.get(directoryConfig(current), book.name))
         LocalBookImporter(library).importFile(destination)
         destination
+    }
+
+    fun delete(book: WebDavRemoteBook): WebDavOperationResult = runCatching {
+        require(book.name == book.name.substringAfterLast('/') && book.name == book.name.substringAfterLast('\\')) {
+            "远端书籍路径非法"
+        }
+        require(book.name.isSupportedBookName()) { "不支持的书籍格式" }
+        client.delete(directoryConfig(requireConfig()), book.name)
+        WebDavOperationResult(message = "远端书籍已删除：${book.name}")
+    }.getOrElse { error ->
+        WebDavOperationResult(error = error.message ?: "WebDAV 书籍删除失败")
     }
 
     private fun requireConfig(): DesktopWebDavConfig = config ?: error("请先配置 WebDAV 书库")

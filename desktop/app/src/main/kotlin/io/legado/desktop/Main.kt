@@ -290,8 +290,15 @@ fun LegadoApp(
     val protocolRegistrationModel = remember { WindowsProtocolRegistrationModel() }
     val fileAssociationRegistrationModel = remember { WindowsFileAssociationRegistrationModel() }
     val webDavSettingsModel = remember(library) {
-        (library as? DesktopWebDavConfigStore)?.let { store ->
-            WebDavSettingsModel(WebDavBackupModel(library, store = store))
+        val store = library as? DesktopWebDavConfigStore
+        if (store != null && dataDirectory != null) {
+            createWebDavSettingsModel(
+                library = library,
+                dataDirectory = dataDirectory,
+                store = store
+            )
+        } else {
+            null
         }
     }
     val dataDirectoryMigrationModel = remember(sqliteLibrary) {
@@ -3542,6 +3549,125 @@ private fun SettingsScreen(
                     Icon(Icons.Default.Download, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("恢复选中备份")
+                }
+                Spacer(Modifier.height(24.dp))
+                Text("WebDAV 远端书库", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = current.bookDirectory,
+                    onValueChange = {
+                        webDavModel.updateBookDirectory(it)
+                        revision++
+                    },
+                    label = { Text("书库目录") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            webDavScope.launch {
+                                val result = withContext(Dispatchers.IO) { webDavModel.configure() }
+                                revision++
+                                onBackupFeedback(result.message ?: result.error ?: "WebDAV 书库配置失败")
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("保存书库目录")
+                    }
+                    Button(
+                        onClick = {
+                            webDavScope.launch {
+                                val result = withContext(Dispatchers.IO) { webDavModel.refreshRemoteBooks() }
+                                revision++
+                                onBackupFeedback(result.message ?: result.error ?: "远端书库刷新失败")
+                            }
+                        },
+                        enabled = webDavModel.isConfigured()
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("刷新书库")
+                    }
+                    Button(
+                        onClick = {
+                            selectBackupFile("上传到 WebDAV 书库", FileDialog.LOAD)?.let { bookFile ->
+                                webDavScope.launch {
+                                    val result = withContext(Dispatchers.IO) { webDavModel.uploadBook(bookFile) }
+                                    revision++
+                                    onBackupFeedback(result.message ?: result.error ?: "WebDAV 书籍上传失败")
+                                }
+                            }
+                        },
+                        enabled = webDavModel.isConfigured()
+                    ) {
+                        Icon(Icons.Default.Upload, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("上传书籍")
+                    }
+                }
+                if (current.remoteBooks.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    current.remoteBooks.forEach { remoteBook ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    webDavModel.selectRemoteBook(remoteBook.name)
+                                    revision++
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = current.selectedRemoteBookName == remoteBook.name,
+                                onClick = {
+                                    webDavModel.selectRemoteBook(remoteBook.name)
+                                    revision++
+                                }
+                            )
+                            Text(
+                                text = "${remoteBook.name} (${remoteBook.size} B)",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            webDavScope.launch {
+                                val result = withContext(Dispatchers.IO) { webDavModel.downloadSelectedRemoteBook() }
+                                revision++
+                                if (result.isSuccess) onWebDavRestoreSuccess()
+                                onBackupFeedback(result.message ?: result.error ?: "远端书籍下载失败")
+                            }
+                        },
+                        enabled = webDavModel.isConfigured() && current.selectedRemoteBookName != null
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("下载并导入")
+                    }
+                    Button(
+                        onClick = {
+                            webDavScope.launch {
+                                val result = withContext(Dispatchers.IO) { webDavModel.deleteSelectedRemoteBook() }
+                                revision++
+                                onBackupFeedback(result.message ?: result.error ?: "远端书籍删除失败")
+                            }
+                        },
+                        enabled = webDavModel.isConfigured() && current.selectedRemoteBookName != null
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("删除远端书籍")
+                    }
                 }
                 current.error?.let { error ->
                     Text(error, color = MaterialTheme.colorScheme.error)

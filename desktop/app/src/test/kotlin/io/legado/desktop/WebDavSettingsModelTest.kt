@@ -111,6 +111,50 @@ class WebDavSettingsModelTest {
         assertEquals("远端正文", library.content(chapter))
     }
 
+    @Test
+    fun remoteBookCanBeDeletedAndTheOperationUsesTheSelectedSafeName() {
+        val client = FakeWebDavClient().apply {
+            put(
+                DesktopWebDavConfig("https://dav.example/", "reader", "secret"),
+                "books/remote.txt",
+                "内容".toByteArray()
+            )
+        }
+        val remoteModel = WebDavRemoteBookModel(
+            library = InMemoryCoreLibrary(),
+            client = client,
+            store = MemoryWebDavConfigStore(),
+            downloadDirectory = tempDirectory.resolve("downloads")
+        )
+
+        assertTrue(remoteModel.configure("https://dav.example/", "reader", "secret").isSuccess)
+        val book = remoteModel.listBooks().getOrThrow().single()
+
+        assertTrue(remoteModel.delete(book).isSuccess)
+        assertTrue(remoteModel.listBooks().getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun appWebDavSettingsModelIncludesRemoteBookActionsWhenADataDirectoryExists() {
+        val library = InMemoryCoreLibrary()
+        val store = MemoryWebDavConfigStore()
+        val client = FakeWebDavClient()
+
+        val model = createWebDavSettingsModel(
+            library = library,
+            store = store,
+            client = client,
+            dataDirectory = tempDirectory
+        )
+
+        assertTrue(model != null)
+        model!!.updateUrl("https://dav.example/")
+        model.updateUsername("reader")
+        model.updatePassword("secret")
+        assertTrue(model.configure().isSuccess)
+        assertTrue(model.refreshRemoteBooks().isSuccess)
+    }
+
     private class MemoryWebDavConfigStore : DesktopWebDavConfigStore {
         private var config: DesktopWebDavConfig? = null
 
@@ -135,6 +179,10 @@ class WebDavSettingsModelTest {
         override fun get(config: DesktopWebDavConfig, name: String): ByteArray = files.getValue(
             if (config.url.endsWith("/books/")) "books/$name" else name
         )
+
+        override fun delete(config: DesktopWebDavConfig, name: String) {
+            files.remove(if (config.url.endsWith("/books/")) "books/$name" else name)
+        }
 
         override fun listDirectory(config: DesktopWebDavConfig): List<WebDavBackupFile> = files.map { (name, content) ->
             WebDavBackupFile(name.substringAfterLast('/'), content.size.toLong())

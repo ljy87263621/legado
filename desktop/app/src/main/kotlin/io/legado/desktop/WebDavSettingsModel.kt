@@ -113,6 +113,28 @@ class WebDavSettingsModel(
         ).also { result -> state = state.copy(message = result.message, error = result.error) }
     }
 
+    fun uploadBook(localFile: Path): WebDavOperationResult {
+        val remote = remoteBookModel ?: return WebDavOperationResult(error = "当前数据存储不支持 WebDAV 书库")
+        val result = remote.upload(localFile)
+        if (result.isSuccess) refreshRemoteBooks()
+        state = state.copy(message = result.message, error = result.error)
+        return result
+    }
+
+    fun deleteSelectedRemoteBook(): WebDavOperationResult {
+        val remote = remoteBookModel ?: return WebDavOperationResult(error = "当前数据存储不支持 WebDAV 书库")
+        val selected = state.selectedRemoteBookName ?: return WebDavOperationResult(error = "请先选择远端书籍")
+        val book = state.remoteBooks.firstOrNull { it.name == selected }
+            ?: return WebDavOperationResult(error = "远端书籍不存在")
+        val result = remote.delete(book)
+        if (result.isSuccess) {
+            state = state.copy(selectedRemoteBookName = null)
+            refreshRemoteBooks()
+        }
+        state = state.copy(message = result.message, error = result.error)
+        return result
+    }
+
     fun refresh(): WebDavOperationResult {
         val result = backupModel.listBackups()
             .fold(

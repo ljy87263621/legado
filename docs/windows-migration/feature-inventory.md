@@ -26,7 +26,7 @@ Status values: `baseline` means present in Android, `web-partial` means exposed 
 | Windows URL protocol association | Android intent/activity routing for `yuedu://` and `legado://` | none | Settings action and startup registration for per-user `yuedu://` and `legado://` links | desktop-partial |
 | Windows file-extension association | Android document/open intent handling | none | Settings action and startup registration for supported local book, image, comic and audio files; associated launch imports the file and opens the desktop reader | desktop-partial |
 | Settings and themes | `ui/config`, `constant/Theme.kt` | theme config only | All read/source/network/backup/TTS settings | desktop-partial |
-| Backup and WebDAV/sync | settings, `data/entities/Server.kt`, web server | server connection store | Portable data, cloud backup and restore; desktop WebDAV ZIP upload/list/download/restore plus remote-book download/import subset | desktop-partial |
+| Backup and WebDAV/sync | settings, `data/entities/Server.kt`, web server | server connection store | Portable data, cloud backup and restore; desktop WebDAV ZIP upload/list/download/restore plus remote-book list/upload/download/import/delete subset | desktop-partial |
 | Local HTTP/WebSocket management API | `web/HttpServer.kt`, `web/WebSocketServer.kt` | required by current web module | Embedded loopback-only desktop HTTP bridge with compatible JSON contract, static management pages, upload page, local import, image/cover proxy, TOC refresh and replacement-rule routes, plus a WebSocket bridge on the next port | desktop-partial |
 
 ## Core Data and Runtime Areas
@@ -142,7 +142,7 @@ Settings provides a Windows WebDAV backup section with URL, username, password, 
 
 The transport uses Java's `HttpClient` with bounded connect/request timeouts, redirects disabled, and Basic Authentication when credentials are configured. Remote names are deliberately limited to safe single-level `backup*.zip` filenames; path traversal and arbitrary remote paths are rejected. XML DAV responses are parsed with external entity and DTD loading disabled. Tests cover URL normalization, configuration round-trip, PROPFIND/PUT/GET listing/upload/download/restore, unsafe names, authentication failures, settings configuration, refresh, selection, and upload state. SQLite persistence is covered across close/reopen.
 
-This is a desktop remote ZIP backup/restore and selected remote-book download/import subset, not Android WebDAV synchronization. It does not synchronize reading progress, images, or other records bidirectionally; it has no background sync, conflict resolution, Android service/notification behavior, or WebDAV side effects in the local HTTP management bridge. Portable packaging remains the distribution boundary; WebDAV credentials are stored in the local desktop database and are not claimed to have Android encrypted-preference parity.
+This is a desktop remote ZIP backup/restore and remote-book list/upload/download/import/delete subset, not Android WebDAV synchronization. It does not synchronize reading progress, images, or other records bidirectionally; it has no background sync, conflict resolution, Android service/notification behavior, or WebDAV side effects in the local HTTP management bridge. Portable packaging remains the distribution boundary; WebDAV credentials are stored in the local desktop database and are not claimed to have Android encrypted-preference parity.
 
 ## Local Audio Reader Subset
 
