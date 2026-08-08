@@ -5,11 +5,33 @@ import io.legado.core.library.InMemoryCoreLibrary
 import io.legado.core.source.BookSourceSearchService
 import io.legado.core.source.CoreHttpClient
 import io.legado.core.source.CoreHttpResponse
+import io.legado.core.source.CoreSourceSessionStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExploreModelTest {
+
+    @Test
+    fun exposesLoginUrlWhenDiscoveryRequiresAuthentication() {
+        val library = InMemoryCoreLibrary()
+        val source = source()
+        library.saveSource(source)
+        val client = object : CoreHttpClient {
+            override fun get(url: String, headers: Map<String, String>): CoreHttpResponse =
+                CoreHttpResponse("https://source.example/signin", "", 403)
+        }
+        val model = ExploreModel(library, BookSourceSearchService(library, client))
+
+        model.refreshSources()
+        model.load()
+
+        assertFalse(model.results.isNotEmpty())
+        assertEquals(CoreSourceSessionStatus.LOGIN_REQUIRED, model.sessionStatus)
+        assertEquals("https://source.example/signin", model.loginUrl)
+        assertEquals(source.bookSourceUrl, model.loginSourceUrl)
+    }
 
     @Test
     fun modelLoadsSelectedSourceOptionsAndAddsResultsToBookshelf() {

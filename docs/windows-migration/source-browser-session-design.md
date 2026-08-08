@@ -1,6 +1,6 @@
 # Source Browser Session Design
 
-**Status:** in progress; search, detail, TOC, text-reader and online-image re-login increment implemented
+**Status:** in progress; search, detail, TOC, text-reader, online-image and discovery re-login increments implemented
 
 The next executable round is tracked in
 `online-source-session-next-round-plan.md` and covers online image reading,
@@ -94,9 +94,9 @@ explicit re-login state and uses the final HTTP(S) login URL for the embedded
 browser. Browser completion continues to reuse the existing Cookie capture and
 source-aware refetch path.
 
-Search, book detail/TOC refresh, text reading and online image reading expose
-the same explicit re-login action when their source request requires
-authentication. Discovery and RSS flows remain follow-up integrations.
+Search, book detail/TOC refresh, text reading, online image reading and
+discovery expose the same explicit re-login action when their source request
+requires authentication. RSS flows remain a follow-up integration.
 
 ## Test and Acceptance Plan
 
@@ -116,6 +116,9 @@ authentication. Discovery and RSS flows remain follow-up integrations.
   passing.
 - Online image chapter and page requests preserve a structured login-required
   state and expose the validated final login URL to the reader UI.
+- Discovery requests preserve a structured login-required state across source
+  selection and pagination, and expose the validated final login URL to the
+  discovery UI.
 
 ## Explicit Non-Goals
 

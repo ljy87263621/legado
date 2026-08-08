@@ -683,6 +683,7 @@ private fun AppShell(
             )
             AppRoute.EXPLORE -> ExploreScreen(
                 model = exploreModel,
+                sourceModel = sourceModel,
                 onBookshelfChanged = onBookshelfChanged,
                 onOpenDetail = onOpenDetail
             )
@@ -1558,6 +1559,7 @@ private fun SearchEmptyState(message: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 private fun ExploreScreen(
     model: ExploreModel,
+    sourceModel: SourceModel,
     onBookshelfChanged: () -> Unit,
     onOpenDetail: (CoreBook) -> Unit
 ) {
@@ -1656,7 +1658,27 @@ private fun ExploreScreen(
             }
             model.error?.let { message ->
                 Spacer(Modifier.height(10.dp))
-                Text(message, color = MaterialTheme.colorScheme.error)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, color = MaterialTheme.colorScheme.error)
+                    if (model.sessionStatus == CoreSourceSessionStatus.LOGIN_REQUIRED &&
+                        !model.loginUrl.isNullOrBlank() && !model.loginSourceUrl.isNullOrBlank()
+                    ) {
+                        Spacer(Modifier.width(12.dp))
+                        Button(onClick = {
+                            runCatching {
+                                sourceModel.openEmbeddedBrowserVerification(
+                                    url = model.loginUrl!!,
+                                    sourceUrl = model.loginSourceUrl!!,
+                                    title = "书源登录"
+                                )
+                            }.onSuccess {
+                                feedback = "已打开内置浏览器，请完成登录后重试"
+                            }.onFailure { throwable ->
+                                feedback = throwable.message ?: "打开重新登录失败"
+                            }
+                        }) { Text("重新登录") }
+                    }
+                }
             }
             if (model.filteredCount > 0 || model.invalidRuleCount > 0) {
                 Spacer(Modifier.height(8.dp))

@@ -53,9 +53,8 @@ an explicit re-login path. Detailed interfaces and acceptance criteria live in
 `source-browser-session-design.md`.
 
 The next round is staged in `online-source-session-next-round-plan.md`. Online
-image reading re-login is now implemented and regression-tested; discovery is
-the next target, followed by RSS, each with its own focused tests and commit
-gate.
+image reading and discovery re-login are implemented and regression-tested;
+RSS is the next target, with its own focused tests and commit gate.
 
 ## Verified Windows Evidence
 

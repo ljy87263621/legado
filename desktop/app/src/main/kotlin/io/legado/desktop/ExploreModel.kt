@@ -6,6 +6,8 @@ import io.legado.core.source.BookSourceSearchService
 import io.legado.core.source.CoreExploreOption
 import io.legado.core.source.CoreSearchResult
 import io.legado.core.source.CoreSourceFilterService
+import io.legado.core.source.CoreSourceSessionException
+import io.legado.core.source.CoreSourceSessionStatus
 
 class ExploreModel(
     private val library: CoreLibrary,
@@ -29,6 +31,15 @@ class ExploreModel(
         private set
 
     var error: String? = null
+        private set
+
+    var sessionStatus: CoreSourceSessionStatus? = null
+        private set
+
+    var loginUrl: String? = null
+        private set
+
+    var loginSourceUrl: String? = null
         private set
 
     var isLoading: Boolean = false
@@ -55,6 +66,7 @@ class ExploreModel(
         page = 1
         results = emptyList()
         error = null
+        clearSessionState()
         filteredCount = 0
         invalidRuleCount = 0
     }
@@ -69,6 +81,7 @@ class ExploreModel(
         page = 1
         results = emptyList()
         error = null
+        clearSessionState()
     }
 
     fun load() {
@@ -96,6 +109,7 @@ class ExploreModel(
         }
         isLoading = true
         error = null
+        clearSessionState()
         try {
             val loaded = service.explore(
                 source = source,
@@ -109,9 +123,24 @@ class ExploreModel(
             page = targetPage
         } catch (throwable: Throwable) {
             error = throwable.message ?: "发现加载失败"
+            captureSessionFailure(throwable)
             if (!append) results = emptyList()
         } finally {
             isLoading = false
+        }
+    }
+
+    private fun clearSessionState() {
+        sessionStatus = null
+        loginUrl = null
+        loginSourceUrl = null
+    }
+
+    private fun captureSessionFailure(throwable: Throwable) {
+        if (throwable is CoreSourceSessionException) {
+            sessionStatus = throwable.status
+            loginUrl = throwable.loginUrl
+            loginSourceUrl = throwable.sourceUrl
         }
     }
 }
