@@ -70,8 +70,65 @@ data class CoreBookSource(
     val exploreStyle: Int = 0
 )
 
+data class CoreCookie(
+    val domain: String,
+    val path: String,
+    val name: String,
+    val value: String,
+    val persistent: Boolean = false,
+    val expiresAt: Long? = null
+)
+
+data class CoreSourceVariable(
+    val sourceUrl: String,
+    val value: String
+)
+
+data class CoreSubscriptionPage(
+    val url: String,
+    val title: String,
+    val iconUrl: String? = null,
+    val category: String = "订阅页面",
+    val lastUpdatedAt: Long = 0L
+)
+
+data class CoreUpdateSchedule(
+    val enabled: Boolean = false,
+    val intervalMinutes: Int = 360,
+    val nextRunAt: Long = 0L,
+    val lastRunAt: Long = 0L,
+    val lastSummary: String? = null
+) {
+    fun normalized(): CoreUpdateSchedule = copy(
+        intervalMinutes = intervalMinutes.coerceIn(15, 1440)
+    )
+}
+
 object CoreBookSourceType {
+    const val AUDIO = 1
+    const val IMAGE = 2
+    const val FILE = 3
+    const val VIDEO = 4
     const val RSS = 5
+}
+
+/** Bit flags persisted on [CoreBook.type], aligned with Android BookType values. */
+object CoreBookType {
+    const val TEXT = 1 shl 3
+    const val AUDIO = 1 shl 5
+    const val IMAGE = 1 shl 6
+    const val WEB_FILE = 1 shl 7
+    const val VIDEO = 1 shl 11
+    const val RSS = 1 shl 12
+
+    fun fromSourceType(sourceType: Int): Int = when (sourceType) {
+        CoreBookSourceType.AUDIO -> AUDIO
+        CoreBookSourceType.IMAGE -> IMAGE
+        CoreBookSourceType.FILE -> TEXT or WEB_FILE
+        CoreBookSourceType.VIDEO -> VIDEO
+        CoreBookSourceType.RSS -> RSS
+        else -> TEXT
+    }
 }
 
 data class CoreChapter(
@@ -90,4 +147,25 @@ data class CoreChapter(
     val end: Long? = null,
     val startFragmentId: String? = null,
     val endFragmentId: String? = null
+)
+
+data class CoreChapterDownloadItem(
+    val chapter: CoreChapter,
+    val status: String,
+    val error: String? = null
+)
+
+data class CoreChapterDownloadTask(
+    val taskId: String,
+    val bookUrl: String,
+    val status: String,
+    val total: Int,
+    val completed: Int,
+    val skipped: Int,
+    val downloaded: Int,
+    val failed: Int,
+    val items: List<CoreChapterDownloadItem>,
+    val error: String? = null,
+    val createdAt: Long,
+    val updatedAt: Long
 )

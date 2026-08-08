@@ -95,4 +95,65 @@ class BookshelfModelTest {
         model.selectGroup(CoreBookGroupIds.UNGROUPED)
         assertTrue(model.visibleBooks().isEmpty())
     }
+
+    @Test
+    fun creatingRenamingAndDeletingAUserGroupCleansItsBookAssignments() {
+        val library = InMemoryCoreLibrary()
+        library.saveBook(CoreBook("book-1", name = "星河", group = 1L))
+        val model = BookshelfModel(library)
+
+        val created = model.createGroup("  重点阅读  ")
+
+        assertEquals(1L, created.groupId)
+        assertEquals("重点阅读", created.groupName)
+        assertTrue(model.renameGroup(created.groupId, "本周阅读"))
+        assertEquals("本周阅读", library.groups().single { it.groupId == created.groupId }.groupName)
+
+        assertTrue(model.deleteGroup(created.groupId))
+        assertEquals(0L, library.book("book-1")?.group)
+        assertTrue(library.groups().none { it.groupId == created.groupId })
+    }
+
+    @Test
+    fun batchMoveAndRemoveBooksUsesGroupBitmasks() {
+        val library = InMemoryCoreLibrary()
+        library.saveGroup(CoreBookGroup(groupId = 1L, groupName = "玄幻", order = 1))
+        library.saveGroup(CoreBookGroup(groupId = 2L, groupName = "科幻", order = 2))
+        library.saveBook(CoreBook("book-1", name = "星河", group = 1L))
+        library.saveBook(CoreBook("book-2", name = "远航", group = 3L))
+        val model = BookshelfModel(library)
+
+        assertEquals(2, model.addBooksToGroup(setOf("book-1", "book-2"), 2L))
+        assertEquals(3L, library.book("book-1")?.group)
+        assertEquals(3L, library.book("book-2")?.group)
+
+        assertEquals(2, model.removeBooksFromGroup(setOf("book-1", "book-2"), 1L))
+        assertEquals(2L, library.book("book-1")?.group)
+        assertEquals(2L, library.book("book-2")?.group)
+    }
+
+    @Test
+    fun movingBooksToAGroupReplacesTheirExistingGroupMembership() {
+        val library = InMemoryCoreLibrary()
+        library.saveGroup(CoreBookGroup(groupId = 1L, groupName = "玄幻", order = 1))
+        library.saveGroup(CoreBookGroup(groupId = 2L, groupName = "科幻", order = 2))
+        library.saveBook(CoreBook("book-1", name = "星河", group = 1L))
+        library.saveBook(CoreBook("book-2", name = "远航", group = 3L))
+        val model = BookshelfModel(library)
+
+        assertEquals(2, model.moveBooksToGroup(setOf("book-1", "book-2"), 2L))
+        assertEquals(2L, library.book("book-1")?.group)
+        assertEquals(2L, library.book("book-2")?.group)
+    }
+
+    @Test
+    fun batchDeleteRemovesOnlyExistingBooks() {
+        val library = InMemoryCoreLibrary()
+        library.saveBook(CoreBook("book-1", name = "星河"))
+        library.saveBook(CoreBook("book-2", name = "远航"))
+        val model = BookshelfModel(library)
+
+        assertEquals(2, model.deleteBooks(setOf("book-1", "book-2", "missing")))
+        assertTrue(library.books().isEmpty())
+    }
 }

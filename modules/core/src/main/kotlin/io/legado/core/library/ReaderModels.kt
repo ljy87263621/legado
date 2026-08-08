@@ -65,5 +65,6 @@ data class CoreReaderSettings(
     val lineSpacingExtra: Int = 12,
     val theme: CoreReaderTheme = CoreReaderTheme.DAY,
     val pageMode: CoreReaderPageMode = CoreReaderPageMode.SCROLL,
-    val autoRead: Boolean = false
+    val autoRead: Boolean = false,
+    val autoReadSpeedSeconds: Int = 10
 )

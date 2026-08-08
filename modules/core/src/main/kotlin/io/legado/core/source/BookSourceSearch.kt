@@ -8,9 +8,11 @@ import com.jayway.jsonpath.JsonPath
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreBookSource
 import io.legado.core.library.CoreBookSourceType
+import io.legado.core.library.CoreBookType
 import io.legado.core.library.CoreLibrary
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -39,15 +41,73 @@ data class CoreSearchResult(
     val source: CoreBookSource
 )
 
+data class CoreExploreOption(
+    val name: String,
+    val options: List<Pair<String, String>>,
+    val selectedValue: String
+)
+
+object CoreExploreUrlOptions {
+    private val optionPattern = Regex("<([^()<>\\s]+)\\(([^()<>]+)\\)>")
+
+    fun parse(url: String): List<CoreExploreOption> {
+        val options = mutableListOf<CoreExploreOption>()
+        optionPattern.findAll(url).forEach { match ->
+            val name = match.groupValues[1]
+            if (options.any { it.name == name }) return@forEach
+            val values = match.groupValues[2].split(',').mapNotNull { raw ->
+                val parts = raw.split(':', limit = 2).map(String::trim)
+                val label = parts.firstOrNull().orEmpty()
+                if (label.isBlank()) null else label to (parts.getOrNull(1) ?: label)
+            }
+            if (values.isNotEmpty()) options += CoreExploreOption(name, values, values.first().second)
+        }
+        return options
+    }
+
+    fun expand(url: String, selectedOptions: Map<String, String>): String =
+        optionPattern.replace(url) { match ->
+            val name = match.groupValues[1]
+            val options = parseOptionValues(match.groupValues[2])
+            selectedOptions[name]?.takeIf { value -> options.any { it.second == value } }
+                ?: options.firstOrNull()?.second
+                ?: match.value
+        }
+
+    private fun parseOptionValues(raw: String): List<Pair<String, String>> =
+        raw.split(',').mapNotNull { value ->
+            val parts = value.split(':', limit = 2).map(String::trim)
+            val label = parts.firstOrNull().orEmpty()
+            if (label.isBlank()) null else label to (parts.getOrNull(1) ?: label)
+        }
+}
+
 data class CoreHttpResponse(
     val url: String,
     val body: String,
     val statusCode: Int = 200,
-    val headers: Map<String, List<String>> = emptyMap()
+    val headers: Map<String, List<String>> = emptyMap(),
+    val bodyBytes: ByteArray? = null
+)
+
+data class CoreHttpRequest(
+    val url: String,
+    val method: String = "GET",
+    val headers: Map<String, String> = emptyMap(),
+    val body: String? = null,
+    val charset: String? = null
 )
 
 interface CoreHttpClient {
     fun get(url: String, headers: Map<String, String> = emptyMap()): CoreHttpResponse
+
+    fun request(request: CoreHttpRequest): CoreHttpResponse {
+        require(request.method.equals("GET", ignoreCase = true)) {
+            "HTTP client does not support ${request.method} requests"
+        }
+        require(request.body == null) { "GET request cannot contain a body" }
+        return get(request.url, request.headers)
+    }
 }
 
 /** Small JVM-only client used by the desktop app when no platform HTTP adapter is supplied. */
@@ -58,26 +118,55 @@ class JavaNetHttpClient(
     private val cookiesByHost = ConcurrentHashMap<String, MutableMap<String, String>>()
 
     override fun get(url: String, headers: Map<String, String>): CoreHttpResponse {
-        val connection = URL(url).openConnection() as HttpURLConnection
+        return request(CoreHttpRequest(url = url, headers = headers))
+    }
+
+    override fun request(request: CoreHttpRequest): CoreHttpResponse {
+        return requestInternal(request, useCookieJar = true)
+    }
+
+    internal fun requestWithoutCookies(request: CoreHttpRequest): CoreHttpResponse {
+        return requestInternal(request, useCookieJar = false)
+    }
+
+    private fun requestInternal(
+        request: CoreHttpRequest,
+        useCookieJar: Boolean
+    ): CoreHttpResponse {
+        val connection = URL(request.url).openConnection() as HttpURLConnection
         try {
-            connection.requestMethod = "GET"
+            val method = request.method.uppercase(Locale.ROOT)
+            connection.requestMethod = method
             connection.connectTimeout = connectTimeoutMillis
             connection.readTimeout = readTimeoutMillis
             connection.instanceFollowRedirects = true
-            headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
-            val hostCookies = cookiesByHost[connection.url.host].orEmpty()
-            if (hostCookies.isNotEmpty() && connection.getRequestProperty("Cookie") == null) {
-                connection.setRequestProperty(
-                    "Cookie",
-                    hostCookies.entries.joinToString("; ") { (name, value) -> "$name=$value" }
-                )
+            request.headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+            if (useCookieJar) {
+                val hostCookies = cookiesByHost[connection.url.host].orEmpty()
+                if (hostCookies.isNotEmpty() && request.headers.keys.none { it.equals("Cookie", ignoreCase = true) }) {
+                    connection.setRequestProperty(
+                        "Cookie",
+                        hostCookies.entries.joinToString("; ") { (name, value) -> "$name=$value" }
+                    )
+                }
+            }
+            request.body?.let { body ->
+                connection.doOutput = true
+                val charset = request.charset.toCharsetOrUtf8()
+                connection.outputStream.use { output ->
+                    output.write(body.toByteArray(charset))
+                }
             }
             val statusCode = connection.responseCode
             val responseStream = if (statusCode >= 400) connection.errorStream else connection.inputStream
-            val body = responseStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-            connection.headerFields["Set-Cookie"].orEmpty().forEach { cookie ->
-                cookie.substringBefore(';').split('=', limit = 2).takeIf { it.size == 2 }?.let { pair ->
-                    cookiesByHost.getOrPut(connection.url.host) { ConcurrentHashMap() }[pair[0]] = pair[1]
+            val rawBytes = responseStream?.use { it.readBytes() } ?: ByteArray(0)
+            val responseCharset = responseCharset(connection, request.charset)
+            val body = rawBytes.toString(responseCharset)
+            if (useCookieJar) {
+                connection.headerFields["Set-Cookie"].orEmpty().forEach { cookie ->
+                    cookie.substringBefore(';').split('=', limit = 2).takeIf { it.size == 2 }?.let { pair ->
+                        cookiesByHost.getOrPut(connection.url.host) { ConcurrentHashMap() }[pair[0]] = pair[1]
+                    }
                 }
             }
             return CoreHttpResponse(
@@ -85,12 +174,24 @@ class JavaNetHttpClient(
                 body = body,
                 statusCode = statusCode,
                 headers = connection.headerFields.filterKeys { it != null }
-                    .mapKeys { it.key!! }
+                    .mapKeys { it.key!! },
+                bodyBytes = rawBytes
             )
         } finally {
             connection.disconnect()
         }
     }
+
+    private fun responseCharset(connection: HttpURLConnection, fallback: String?): java.nio.charset.Charset {
+        val contentType = connection.getHeaderField("Content-Type").orEmpty()
+        val charsetName = Regex("charset\\s*=\\s*([^;]+)", RegexOption.IGNORE_CASE)
+            .find(contentType)?.groupValues?.getOrNull(1)?.trim()?.trim('"')
+        return (charsetName ?: fallback).toCharsetOrUtf8()
+    }
+
+    private fun String?.toCharsetOrUtf8(): java.nio.charset.Charset =
+        this?.takeIf(String::isNotBlank)?.let { runCatching { java.nio.charset.Charset.forName(it) }.getOrNull() }
+            ?: StandardCharsets.UTF_8
 }
 
 object SourceUrlTemplate {
@@ -280,22 +381,28 @@ class BookSourceSearchService(
     fun explore(
         source: CoreBookSource,
         page: Int = 1,
-        exploreUrl: String? = source.exploreUrl
+        exploreUrl: String? = source.exploreUrl,
+        selectedOptions: Map<String, String> = emptyMap()
     ): List<CoreSearchResult> {
         require(page > 0) { "页码必须大于 0" }
         val template = exploreUrl?.takeIf(String::isNotBlank)
             ?: error("订阅源缺少发现地址: ${source.bookSourceUrl}")
-        val url = CoreSourceScriptSupport.expandUrl(
+        val resolved = CoreUrlRuleSupport.resolve(
             source = source,
-            template = template,
-            keyword = "",
+            rawUrl = template,
             page = page,
-            ruleField = "exploreUrl"
+            selectedOptions = selectedOptions,
+            ruleField = "exploreUrl",
+            library = library
         )
-        val response = httpClient.get(url, CoreSourceScriptSupport.headers(source, url, mapOf("page" to page)))
+        val response = request(
+            source,
+            resolved,
+            mapOf("page" to page)
+        )
         check(response.statusCode in 200..399) { "订阅源请求失败: HTTP ${response.statusCode}" }
         val rule = parseRule(source.ruleExplore ?: error("订阅源缺少发现规则: ${source.bookSourceUrl}"))
-        val baseUrl = response.url.ifBlank { url }
+        val baseUrl = response.url.ifBlank { resolved.requestUrl }
         val records = when {
             isRegexList(rule.bookList) -> parseRegexRecords(rule, response.body)
             response.body.trimStart().startsWith("{") || response.body.trimStart().startsWith("[") ->
@@ -306,20 +413,22 @@ class BookSourceSearchService(
     }
 
     private fun searchSource(source: CoreBookSource, keyword: String, page: Int): List<CoreSearchResult> {
-        val url = CoreSourceScriptSupport.expandUrl(
+        val resolved = CoreUrlRuleSupport.resolve(
             source = source,
-            template = source.searchUrl!!,
+            rawUrl = source.searchUrl!!,
             keyword = keyword,
             page = page,
-            ruleField = "searchUrl"
+            ruleField = "searchUrl",
+            library = library
         )
-        val response = httpClient.get(
-            url,
-            CoreSourceScriptSupport.headers(source, url, mapOf("key" to keyword, "keyword" to keyword, "page" to page))
+        val response = request(
+            source,
+            resolved,
+            mapOf("key" to keyword, "keyword" to keyword, "page" to page)
         )
         check(response.statusCode in 200..399) { "书源请求失败: HTTP ${response.statusCode}" }
         val rule = parseRule(source.ruleSearch!!)
-        val baseUrl = response.url.ifBlank { url }
+        val baseUrl = response.url.ifBlank { resolved.requestUrl }
         val records = when {
             isRegexList(rule.bookList) -> parseRegexRecords(rule, response.body)
             response.body.trimStart().startsWith("{") || response.body.trimStart().startsWith("[") ->
@@ -341,6 +450,9 @@ class BookSourceSearchService(
 
     private fun parseHtmlRecords(rule: CoreSearchRule, body: String, baseUrl: String): List<Any> {
         val document = Jsoup.parse(body, baseUrl)
+        if (CoreXPathRuleSupport.isRule(rule.bookList)) {
+            return CoreXPathRuleSupport.select(document, rule.bookList!!)
+        }
         val selector = rule.bookList.orEmpty().removePrefix("@CSS:").trim()
         if (selector.isBlank()) return listOf(document)
         return document.select(selector)
@@ -378,7 +490,7 @@ class BookSourceSearchService(
             kind = extractField(rule.kind, record, baseUrl).ifBlank { null },
             latestChapterTitle = extractField(rule.lastChapter, record, baseUrl).ifBlank { null },
             wordCount = extractField(rule.wordCount, record, baseUrl).ifBlank { null },
-            type = source.bookSourceType,
+            type = CoreBookType.fromSourceType(source.bookSourceType),
             order = source.customOrder,
             originOrder = source.customOrder
         )
@@ -389,10 +501,12 @@ class BookSourceSearchService(
         if (rule.isNullOrBlank()) return ""
         if (record is MatchResult) return extractRegexField(rule, record)
         if (record is Element) return extractHtmlField(rule, record)
+        if (record is Node) return CoreXPathRuleSupport.firstText(Jsoup.parse(record.toString(), baseUrl), rule)
         return extractJsonField(rule, record)
     }
 
     private fun extractHtmlField(rule: String, element: Element): String {
+        if (CoreXPathRuleSupport.isRule(rule)) return CoreXPathRuleSupport.firstText(element, rule)
         val normalized = rule.removePrefix("@CSS:").trim()
         val separator = normalized.lastIndexOf('@')
         if (separator > 0) {
@@ -463,4 +577,29 @@ class BookSourceSearchService(
     private fun resolveUrl(baseUrl: String, value: String): String = runCatching {
         URI(baseUrl).resolve(value).toString()
     }.getOrDefault(value)
+
+    private fun request(
+        source: CoreBookSource,
+        resolved: CoreResolvedUrl,
+        bindings: Map<String, Any?> = emptyMap()
+    ): CoreHttpResponse {
+        val sourceHeaders = CoreSourceScriptSupport.headers(
+            source = source,
+            baseUrl = resolved.url,
+            bindings = bindings,
+            library = library
+        )
+        val request = CoreHttpRequest(
+            url = resolved.requestUrl,
+            method = resolved.method,
+            headers = CoreUrlRuleSupport.mergeHeaders(sourceHeaders, resolved.headers),
+            body = resolved.body,
+            charset = resolved.charset
+        )
+        return if (httpClient is CoreSourceAwareHttpClient) {
+            httpClient.request(source, request)
+        } else {
+            httpClient.request(request)
+        }
+    }
 }

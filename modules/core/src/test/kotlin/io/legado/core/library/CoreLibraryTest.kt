@@ -74,6 +74,37 @@ class CoreLibraryTest {
     }
 
     @Test
+    fun txtTocRulesAreIdentifiedByIdAndSortedBySerialNumber() {
+        val later = CoreTxtTocRule(id = 2L, name = "later", rule = "later", serialNumber = 2)
+        val earlier = CoreTxtTocRule(id = 1L, name = "earlier", rule = "earlier", serialNumber = 1)
+
+        library.saveTxtTocRule(later)
+        library.saveTxtTocRule(earlier)
+        library.saveTxtTocRule(earlier.copy(name = "updated"))
+
+        assertEquals(listOf("updated", "later"), library.txtTocRules().map(CoreTxtTocRule::name))
+        assertEquals(listOf("updated", "later"), library.enabledTxtTocRules().map(CoreTxtTocRule::name))
+
+        library.deleteTxtTocRule(earlier.id)
+
+        assertEquals(listOf(later), library.txtTocRules())
+    }
+
+    @Test
+    fun sourceFilterRulesAreIdentifiedByIdAndSortedByOrder() {
+        val later = CoreSourceFilterRule(id = "later", name = "later", order = 2)
+        val earlier = CoreSourceFilterRule(id = "earlier", name = "earlier", order = 1)
+
+        library.saveSourceFilterRule(later)
+        library.saveSourceFilterRule(earlier)
+        library.saveSourceFilterRule(earlier.copy(name = "updated"))
+
+        assertEquals(listOf("updated", "later"), library.sourceFilterRules().map(CoreSourceFilterRule::name))
+        library.deleteSourceFilterRule(earlier.id)
+        assertEquals(listOf(later), library.sourceFilterRules())
+    }
+
+    @Test
     fun chaptersAreUniquePerBookAndSortedByOriginalIndex() {
         library.saveChapter(
             CoreChapter(
@@ -117,6 +148,23 @@ class CoreLibraryTest {
         assertNull(library.book("book-1"))
         assertEquals(emptyList<CoreChapter>(), library.chapters("book-1"))
         assertNull(library.content(chapter))
+    }
+
+    @Test
+    fun deletingChaptersRemovesOnlyTheSelectedBookAndItsContent() {
+        val selected = CoreChapter(bookUrl = "book-1", url = "chapter-1")
+        val other = CoreChapter(bookUrl = "book-2", url = "chapter-2")
+        library.saveChapter(selected)
+        library.saveContent(selected, "旧正文")
+        library.saveChapter(other)
+        library.saveContent(other, "保留正文")
+
+        library.deleteChapters("book-1")
+
+        assertTrue(library.chapters("book-1").isEmpty())
+        assertNull(library.content(selected))
+        assertEquals(listOf(other), library.chapters("book-2"))
+        assertEquals("保留正文", library.content(other))
     }
 
     @Test
@@ -231,16 +279,29 @@ class CoreLibraryTest {
         assertEquals(12, library.readerSettings().lineSpacingExtra)
         assertEquals(CoreReaderTheme.DAY, library.readerSettings().theme)
         assertEquals(CoreReaderPageMode.SCROLL, library.readerSettings().pageMode)
+        assertEquals(10, library.readerSettings().autoReadSpeedSeconds)
 
         val updated = library.readerSettings().copy(
             textSize = 24,
             lineSpacingExtra = 16,
             theme = CoreReaderTheme.NIGHT,
             pageMode = CoreReaderPageMode.PAGED,
-            autoRead = true
+            autoRead = true,
+            autoReadSpeedSeconds = 7
         )
         library.saveReaderSettings(updated)
 
         assertEquals(updated, library.readerSettings())
+    }
+
+    @Test
+    fun webReadConfigJsonCanBeSavedAndReadBackWithoutInterpretingItsSchema() {
+        val library = InMemoryCoreLibrary()
+        val config = """{"theme":6,"fontSize":30,"spacing":{"line":1.2}}"""
+
+        assertNull(library.webReadConfigJson())
+        library.saveWebReadConfigJson(config)
+
+        assertEquals(config, library.webReadConfigJson())
     }
 }

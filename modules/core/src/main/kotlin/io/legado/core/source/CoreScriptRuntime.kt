@@ -3,6 +3,8 @@ package io.legado.core.source
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreBookSource
 import io.legado.core.library.CoreChapter
+import io.legado.core.library.CoreLibrary
+import org.mozilla.javascript.BaseFunction
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.ContextFactory
 import org.mozilla.javascript.ContextAction
@@ -29,6 +31,11 @@ data class CoreScriptContext(
     val ruleField: String? = null,
     val baseUrl: String? = null,
     val timeoutMillis: Long = 2_000
+)
+
+data class CoreScriptSourceBinding(
+    val source: CoreBookSource,
+    val library: CoreLibrary
 )
 
 class CoreScriptException(
@@ -97,6 +104,7 @@ class RhinoCoreScriptRuntime : CoreScriptRuntime {
         null -> null
         is String, is Number, is Boolean -> value
         is CoreBook -> toJsObject(cx, scope, value.toScriptMap())
+        is CoreScriptSourceBinding -> toJsSourceObject(cx, scope, value)
         is CoreBookSource -> toJsObject(cx, scope, value.toScriptMap())
         is CoreChapter -> toJsObject(cx, scope, value.toScriptMap())
         is Map<*, *> -> toJsObject(cx, scope, value)
@@ -112,6 +120,37 @@ class RhinoCoreScriptRuntime : CoreScriptRuntime {
         value.forEach { (key, item) ->
             if (key != null) ScriptableObject.putProperty(obj, key.toString(), toJsValue(cx, scope, item))
         }
+        return obj
+    }
+
+    private fun toJsSourceObject(
+        cx: Context,
+        scope: Scriptable,
+        binding: CoreScriptSourceBinding
+    ): NativeObject {
+        val obj = toJsObject(cx, scope, binding.source.toScriptMap())
+        ScriptableObject.putProperty(obj, "getVariable", object : BaseFunction() {
+            override fun call(
+                context: Context,
+                callScope: Scriptable,
+                thisObj: Scriptable?,
+                args: Array<out Any?>
+            ): Any = binding.library.sourceVariable(binding.source.bookSourceUrl).orEmpty()
+        })
+        ScriptableObject.putProperty(obj, "setVariable", object : BaseFunction() {
+            override fun call(
+                context: Context,
+                callScope: Scriptable,
+                thisObj: Scriptable?,
+                args: Array<out Any?>
+            ): Any? {
+                val value = args.firstOrNull()
+                    ?.takeUnless { it === Undefined.instance }
+                    ?.toString()
+                binding.library.saveSourceVariable(binding.source.bookSourceUrl, value)
+                return Undefined.instance
+            }
+        })
         return obj
     }
 

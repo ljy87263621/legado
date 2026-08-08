@@ -6,10 +6,12 @@ import com.google.gson.JsonParser
 import com.jayway.jsonpath.JsonPath
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreBookSource
+import io.legado.core.library.CoreBookSourceType
 import io.legado.core.library.CoreChapter
 import io.legado.core.library.CoreLibrary
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
 import java.net.URI
 import java.util.Locale
 
@@ -62,7 +64,12 @@ class OnlineBookService(
         val rule = parseRule(source.ruleBookInfo, CoreBookInfoRule::class.java)
         val regexContext = regexContext(ruleFields(rule), response.body)
         val initElement = rule.init?.takeIf(String::isNotBlank)?.let {
-            Jsoup.parse(response.body, response.url).selectFirst(normalizeCssRule(it))
+            val document = Jsoup.parse(response.body, response.url)
+            if (CoreXPathRuleSupport.isRule(it)) {
+                CoreXPathRuleSupport.firstElement(document, it)
+            } else {
+                document.selectFirst(normalizeCssRule(it))
+            }
         }
         val updated = book.copy(
             name = extract(source, "ruleBookInfo.name", rule.name, response.body, response.url, regexContext, initElement)
@@ -92,7 +99,11 @@ class OnlineBookService(
         return updated
     }
 
-    fun refreshChapters(book: CoreBook, runPreUpdateJs: Boolean = true): List<CoreChapter> {
+    fun refreshChapters(
+        book: CoreBook,
+        runPreUpdateJs: Boolean = true,
+        replaceExistingChapters: Boolean = false
+    ): List<CoreChapter> {
         val source = sourceFor(book)
         val rule = parseRule(source.ruleToc, CoreTocRule::class.java)
         val effectiveBook = if (runPreUpdateJs && !rule.preUpdateJs.isNullOrBlank()) {
@@ -100,7 +111,8 @@ class OnlineBookService(
                 source = source,
                 ruleField = "ruleToc.preUpdateJs",
                 script = rule.preUpdateJs,
-                book = book
+                book = book,
+                library = library
             ).also { if (it != book) library.saveBook(it) }
         } else {
             book
@@ -110,6 +122,7 @@ class OnlineBookService(
         val firstUrl = effectiveBook.tocUrl.ifBlank { effectiveBook.bookUrl }
         if (rule.chapterList.isNullOrBlank()) {
             val chapter = CoreChapter(effectiveBook.bookUrl, firstUrl, "共一章", 0)
+            if (replaceExistingChapters) library.deleteChapters(effectiveBook.bookUrl)
             library.saveChapter(chapter)
             saveChapterCount(
                 effectiveBook,
@@ -167,7 +180,8 @@ class OnlineBookService(
                                 "gInt" to 0,
                                 "index" to chapters.size + 1,
                                 "title" to chapter.title
-                            )
+                            ),
+                            library = library
                         )
                         val formattedChapter = scriptResult.first
                         val formatted = scriptResult.second?.toString()?.takeIf { it != "null" }
@@ -185,6 +199,7 @@ class OnlineBookService(
                 ?.let { resolve(response.url, it) }
         }
         require(chapters.isNotEmpty()) { "目录解析结果为空: $firstUrl" }
+        if (replaceExistingChapters) library.deleteChapters(effectiveBook.bookUrl)
         chapters.forEachIndexed { index, chapter ->
             val normalized = chapter.copy(index = index)
             library.saveChapter(normalized)
@@ -199,7 +214,11 @@ class OnlineBookService(
     }
 
     fun loadContent(book: CoreBook, chapter: CoreChapter): String {
-        val source = sourceFor(book)
+        val cachedContent = library.content(chapter)
+        val source = library.source(book.origin)
+        if (source == null) {
+            return cachedContent ?: error("未找到书源: ${book.origin}")
+        }
         val rule = parseRule(source.ruleContent, CoreContentRule::class.java)
         if (!rule.webJs.isNullOrBlank()) {
             throw CoreScriptException(
@@ -208,7 +227,7 @@ class OnlineBookService(
                 "ruleContent.webJs"
             )
         }
-        library.content(chapter)?.let { return it }
+        cachedContent?.let { return it }
         if (rule.content.isNullOrBlank()) {
             library.saveContent(chapter, chapter.url)
             return chapter.url
@@ -235,14 +254,19 @@ class OnlineBookService(
                         "book" to book,
                         "chapter" to effectiveChapter,
                         "title" to effectiveChapter.title
-                    )
+                    ),
+                    library = library
                 ).trim()
                 if (title.isNotBlank()) {
                     effectiveChapter = effectiveChapter.copy(title = title)
                     library.saveChapter(effectiveChapter)
                 }
             }
-            val pageContent = extract(source, "ruleContent.content", rule.content, body, response.url, regexContext)
+            val pageContent = if (source.bookSourceType == CoreBookSourceType.IMAGE) {
+                extractImageContent(rule.content, body, response.url)
+            } else {
+                extract(source, "ruleContent.content", rule.content, body, response.url, regexContext)
+            }
             if (pageContent.isNotBlank()) pages += pageContent
             nextUrl = extract(source, "ruleContent.nextContentUrl", rule.nextContentUrl, body, response.url, regexContext)
                 .trim()
@@ -260,7 +284,29 @@ class OnlineBookService(
         requireNotNull(library.source(book.origin)) { "未找到书源: ${book.origin}" }
 
     private fun request(source: CoreBookSource, url: String): CoreHttpResponse {
-        val response = httpClient.get(url, CoreSourceScriptSupport.headers(source, url))
+        val resolved = CoreUrlRuleSupport.resolve(
+            source = source,
+            rawUrl = url,
+            ruleField = "url",
+            library = library
+        )
+        val sourceHeaders = CoreSourceScriptSupport.headers(
+            source = source,
+            baseUrl = resolved.url,
+            library = library
+        )
+        val request = CoreHttpRequest(
+            url = resolved.requestUrl,
+            method = resolved.method,
+            headers = CoreUrlRuleSupport.mergeHeaders(sourceHeaders, resolved.headers),
+            body = resolved.body,
+            charset = resolved.charset
+        )
+        val response = if (httpClient is CoreSourceAwareHttpClient) {
+            httpClient.request(source, request)
+        } else {
+            httpClient.request(request)
+        }
         check(response.statusCode in 200..399) { "书源请求失败: HTTP ${response.statusCode}" }
         return response
     }
@@ -275,6 +321,9 @@ class OnlineBookService(
                 else -> listOf(value)
             }
         }
+        if (CoreXPathRuleSupport.isRule(rule)) {
+            return CoreXPathRuleSupport.select(Jsoup.parse(body), rule)
+        }
         val selector = normalizeCssRule(rule)
         if (selector.isBlank()) return listOf(Jsoup.parse(body))
         return Jsoup.parse(body).select(selector)
@@ -288,7 +337,8 @@ class OnlineBookService(
         baseUrl: String,
         regexContext: MatchResult?,
         record: Any? = null,
-        bindings: Map<String, Any?> = emptyMap()
+        bindings: Map<String, Any?> = emptyMap(),
+        library: CoreLibrary? = this.library
     ): String {
         if (rawRule.isNullOrBlank()) return ""
         val (rule, replacement) = splitReplacement(rawRule)
@@ -303,6 +353,8 @@ class OnlineBookService(
                     "result" to (record ?: body),
                     "src" to body
                 ) + bindings
+                ,
+                library = library
             )?.toString().orEmpty()
             rule.startsWith("group:", true) -> regexContext?.groupValue(rule.substringAfter(':'))
                 .orEmpty()
@@ -313,6 +365,7 @@ class OnlineBookService(
                 }
                 .orEmpty()
             record is Element -> extractHtml(rule, record)
+            record is Node -> extractXPath(rule, record, body, baseUrl)
             isJsonBody(body) -> extractJson(rule, body, record)
             else -> extractHtml(rule, Jsoup.parse(body, baseUrl))
         }
@@ -320,6 +373,7 @@ class OnlineBookService(
     }
 
     private fun extractHtml(rawRule: String, element: Element): String {
+        if (CoreXPathRuleSupport.isRule(rawRule)) return extractXPath(rawRule, element, element.html(), "")
         val rule = normalizeCssRule(rawRule)
         if (rule.isBlank()) return element.text()
         val separator = rule.lastIndexOf('@')
@@ -328,6 +382,27 @@ class OnlineBookService(
             return attributeValue(target, rule.substring(separator + 1))
         }
         return element.selectFirst(rule)?.text().orEmpty()
+    }
+
+    private fun extractImageContent(rawRule: String?, body: String, baseUrl: String): String {
+        if (rawRule.isNullOrBlank()) return body
+        if (CoreXPathRuleSupport.isRule(rawRule)) {
+            return CoreXPathRuleSupport.select(Jsoup.parse(body, baseUrl), rawRule)
+                .joinToString("\n") { it.outerHtml() }
+        }
+        val selector = normalizeCssRule(rawRule)
+        if (selector.isBlank()) return body
+        val document = Jsoup.parse(body, baseUrl)
+        return document.select(selector).joinToString("\n") { it.outerHtml() }
+    }
+
+    private fun extractXPath(rawRule: String, record: Node, body: String, baseUrl: String): String {
+        val root = when (record) {
+            is Element -> record
+            else -> Jsoup.parse(body, baseUrl)
+        }
+        if (record !is Element && rawRule.trim() == ".") return CoreXPathRuleSupport.nodeText(record)
+        return CoreXPathRuleSupport.firstText(root, rawRule)
     }
 
     private fun extractJson(rawRule: String, body: String, record: Any?): String {

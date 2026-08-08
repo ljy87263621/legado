@@ -2,6 +2,8 @@ package io.legado.core.source
 
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreBookSource
+import io.legado.core.library.CoreBookSourceType
+import io.legado.core.library.CoreChapter
 import io.legado.core.library.InMemoryCoreLibrary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -72,6 +74,98 @@ class OnlineBookServiceTest {
         assertEquals("第一章", chapters.single().title)
         assertEquals("https://source.example/chapter/1", chapters.single().url)
         assertEquals(1, library.book(book.bookUrl)?.totalChapterNum)
+    }
+
+    @Test
+    fun xpathRulesParseBookInfoTocContentAndNextPages() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://xpath.example",
+            bookSourceName = "XPath源",
+            ruleBookInfo = """
+                {
+                  "init": "@XPath://article[@class='detail']",
+                  "name": "//h1",
+                  "author": "//span[@class='author']",
+                  "coverUrl": "//img/@src",
+                  "tocUrl": "//a[@class='toc']/@href"
+                }
+            """.trimIndent(),
+            ruleToc = """
+                {
+                  "chapterList": "@XPath://ul[@id='toc']/li",
+                  "chapterName": "./a",
+                  "chapterUrl": "./a/@href",
+                  "nextTocUrl": "//a[@rel='next']/@href"
+                }
+            """.trimIndent(),
+            ruleContent = """
+                {
+                  "content": "@XPath://div[@id='content']",
+                  "nextContentUrl": "//a[@rel='next']/@href"
+                }
+            """.trimIndent()
+        )
+        val book = CoreBook(
+            bookUrl = "https://xpath.example/book/1",
+            tocUrl = "https://xpath.example/book/1",
+            origin = source.bookSourceUrl,
+            originName = source.bookSourceName
+        )
+        library.saveSource(source)
+        library.saveBook(book)
+        val client = FakeHttpClient { url, _ ->
+            when (url) {
+                "https://xpath.example/book/1" -> CoreHttpResponse(
+                    url,
+                    """
+                        <h1>页面标题</h1>
+                        <article class="detail">
+                          <h1>星河</h1>
+                          <span class="author">甲作者</span>
+                          <img src="/cover.jpg">
+                          <a class="toc" href="/toc/1">目录</a>
+                        </article>
+                    """.trimIndent()
+                )
+                "https://xpath.example/toc/1" -> CoreHttpResponse(
+                    url,
+                    """
+                        <ul id="toc"><li><a href="/chapter/1">第一章</a></li></ul>
+                        <a rel="next" href="/toc/2">下一页</a>
+                    """.trimIndent()
+                )
+                "https://xpath.example/toc/2" -> CoreHttpResponse(
+                    url,
+                    "<ul id='toc'><li><a href='/chapter/2'>第二章</a></li></ul>"
+                )
+                "https://xpath.example/chapter/1" -> CoreHttpResponse(
+                    url,
+                    "<div id='content'>第一页</div><a rel='next' href='/chapter/1/2'>下一页</a>"
+                )
+                "https://xpath.example/chapter/1/2" -> CoreHttpResponse(
+                    url,
+                    "<div id='content'>第二页</div>"
+                )
+                else -> error("unexpected url: $url")
+            }
+        }
+        val service = OnlineBookService(library, client)
+
+        val updatedBook = service.loadBookInfo(book)
+        val chapters = service.refreshChapters(updatedBook)
+        val content = service.loadContent(updatedBook, chapters.first())
+
+        assertEquals("星河", updatedBook.name)
+        assertEquals("甲作者", updatedBook.author)
+        assertEquals("https://xpath.example/cover.jpg", updatedBook.coverUrl)
+        assertEquals("https://xpath.example/toc/1", updatedBook.tocUrl)
+        assertEquals(listOf("第一章", "第二章"), chapters.map { it.title })
+        assertEquals(
+            listOf("https://xpath.example/chapter/1", "https://xpath.example/chapter/2"),
+            chapters.map { it.url }
+        )
+        assertEquals("第一页\n第二页", content)
     }
 
     @Test
@@ -160,6 +254,40 @@ class OnlineBookServiceTest {
 
         assertEquals("已有缓存", service.loadContent(book, chapter))
         assertTrue(client.requestedUrls.isEmpty())
+    }
+
+    @Test
+    fun chapterUrlOptionsAreSentAsAnHttpRequest() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://post.example",
+            ruleContent = "{\"content\":\".content\"}"
+        )
+        val book = CoreBook(
+            bookUrl = "https://post.example/book",
+            tocUrl = "https://post.example/book",
+            origin = source.bookSourceUrl
+        )
+        val chapter = CoreChapter(
+            bookUrl = book.bookUrl,
+            url = "https://post.example/chapter,{\"method\":\"POST\",\"body\":\"chapter=1\"}",
+            title = "第一章",
+            index = 0
+        )
+        library.saveSource(source)
+        library.saveBook(book)
+        library.saveChapter(chapter)
+        val client = RequestRecordingHttpClient { request ->
+            assertEquals("POST", request.method)
+            assertEquals("https://post.example/chapter", request.url)
+            assertEquals("chapter=1", request.body)
+            CoreHttpResponse(request.url, "<div class='content'>正文</div>")
+        }
+
+        val content = OnlineBookService(library, client).loadContent(book, chapter)
+
+        assertEquals("正文", content)
+        assertEquals(1, client.requests.size)
     }
 
     @Test
@@ -459,6 +587,37 @@ class OnlineBookServiceTest {
         assertTrue(error.message.orEmpty().contains("webJs"))
     }
 
+    @Test
+    fun imageContentRulePreservesEveryMatchedImageElement() {
+        val library = InMemoryCoreLibrary()
+        val source = CoreBookSource(
+            bookSourceUrl = "https://manga.example",
+            bookSourceType = CoreBookSourceType.IMAGE,
+            ruleContent = "{\"content\":\".pages img\"}"
+        )
+        val book = CoreBook(
+            bookUrl = "https://manga.example/book/1",
+            tocUrl = "https://manga.example/book/1",
+            origin = source.bookSourceUrl
+        )
+        val chapter = CoreChapter(book.bookUrl, "https://manga.example/chapter/1", "第一话", 0)
+        library.saveSource(source)
+        library.saveBook(book)
+        library.saveChapter(chapter)
+
+        val content = OnlineBookService(library, FakeHttpClient { url, _ ->
+            CoreHttpResponse(
+                url,
+                "<section class='pages'><img src='/images/1'><img data-src='/images/2'></section>"
+            )
+        }).loadContent(book, chapter)
+
+        assertEquals(
+            "<img src=\"/images/1\">\n<img data-src=\"/images/2\">",
+            content
+        )
+    }
+
     private class FakeHttpClient(
         private val handler: (String, Map<String, String>) -> CoreHttpResponse
     ) : CoreHttpClient {
@@ -467,6 +626,20 @@ class OnlineBookServiceTest {
         override fun get(url: String, headers: Map<String, String>): CoreHttpResponse {
             requestedUrls += url
             return handler(url, headers)
+        }
+    }
+
+    private class RequestRecordingHttpClient(
+        private val handler: (CoreHttpRequest) -> CoreHttpResponse
+    ) : CoreHttpClient {
+        val requests = mutableListOf<CoreHttpRequest>()
+
+        override fun get(url: String, headers: Map<String, String>): CoreHttpResponse =
+            error("URL options must use CoreHttpRequest")
+
+        override fun request(request: CoreHttpRequest): CoreHttpResponse {
+            requests += request
+            return handler(request)
         }
     }
 }

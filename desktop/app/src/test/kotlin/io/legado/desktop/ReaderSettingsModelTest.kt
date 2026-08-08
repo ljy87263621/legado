@@ -20,7 +20,8 @@ class ReaderSettingsModelTest {
             lineSpacingExtra = 16,
             theme = CoreReaderTheme.NIGHT,
             pageMode = CoreReaderPageMode.PAGED,
-            autoRead = true
+            autoRead = true,
+            autoReadSpeedSeconds = 7
         )
 
         assertEquals(24, model.settings.textSize)
@@ -28,6 +29,18 @@ class ReaderSettingsModelTest {
         assertEquals(CoreReaderTheme.NIGHT, library.readerSettings().theme)
         assertEquals(CoreReaderPageMode.PAGED, library.readerSettings().pageMode)
         assertEquals(true, library.readerSettings().autoRead)
+        assertEquals(7, library.readerSettings().autoReadSpeedSeconds)
+    }
+
+    @Test
+    fun readerSettingsClampsAutoReadSpeedToAUsableRange() {
+        val model = ReaderSettingsModel(InMemoryCoreLibrary())
+
+        model.update(autoReadSpeedSeconds = 0)
+        assertEquals(1, model.settings.autoReadSpeedSeconds)
+
+        model.update(autoReadSpeedSeconds = 1000)
+        assertEquals(120, model.settings.autoReadSpeedSeconds)
     }
 
     @Test

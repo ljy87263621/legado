@@ -4,14 +4,58 @@ import io.legado.core.library.CoreChapter
 import io.legado.core.library.CoreBookmark
 import io.legado.core.library.CoreLibrary
 import io.legado.core.library.CoreReadRecord
+import io.legado.core.library.CoreReplacementService
 import io.legado.core.source.OnlineBookService
+import java.nio.file.Files
+import java.nio.file.Path
+
+data class ReaderPage(
+    val text: String,
+    val startPosition: Int,
+    val endPosition: Int
+)
+
+enum class ReaderAutoReadResult {
+    PAGE_ADVANCED,
+    CHAPTER_ADVANCED,
+    END
+}
+
+enum class ReaderKeyboardKey {
+    LEFT,
+    RIGHT,
+    UP,
+    DOWN,
+    SPACE,
+    S
+}
+
+enum class ReaderKeyboardCommand {
+    PREVIOUS_PAGE,
+    NEXT_PAGE,
+    PREVIOUS_CHAPTER,
+    NEXT_CHAPTER,
+    SAVE_POSITION;
+
+    companion object {
+        fun from(key: ReaderKeyboardKey, ctrlPressed: Boolean = false): ReaderKeyboardCommand? = when {
+            ctrlPressed && key == ReaderKeyboardKey.LEFT -> PREVIOUS_CHAPTER
+            ctrlPressed && key == ReaderKeyboardKey.RIGHT -> NEXT_CHAPTER
+            key == ReaderKeyboardKey.LEFT || key == ReaderKeyboardKey.UP -> PREVIOUS_PAGE
+            key == ReaderKeyboardKey.RIGHT || key == ReaderKeyboardKey.DOWN || key == ReaderKeyboardKey.SPACE -> NEXT_PAGE
+            key == ReaderKeyboardKey.S -> SAVE_POSITION
+            else -> null
+        }
+    }
+}
 
 class ReaderModel(
     private val library: CoreLibrary,
     bookUrl: String,
     private val onlineService: OnlineBookService? = null,
     private val clockSeconds: () -> Long = { System.currentTimeMillis() / 1000L },
-    startChapterIndex: Int? = null
+    startChapterIndex: Int? = null,
+    startPosition: Int? = null
 ) {
 
     private val book = requireNotNull(library.book(bookUrl)) { "Book does not exist: $bookUrl" }
@@ -23,12 +67,13 @@ class ReaderModel(
             .takeIf { it >= 0 }
             ?: requestedIndex.coerceIn(chapters.indices)
     }
-    private var position = if (startChapterIndex == null) {
-        book.durChapterPos.coerceAtLeast(0)
-    } else {
-        0
+    private var position = when {
+        startPosition != null -> startPosition.coerceAtLeast(0)
+        startChapterIndex == null -> book.durChapterPos.coerceAtLeast(0)
+        else -> 0
     }
     private val sessionStartSec = clockSeconds()
+    private val replacementService = CoreReplacementService(library)
 
     var error: String? = null
         private set
@@ -39,13 +84,38 @@ class ReaderModel(
     val currentChapter: CoreChapter
         get() = chapters[currentIndex]
 
-    val currentContent: String
-        get() = library.content(currentChapter).orEmpty()
+    val currentChapterTitle: String
+        get() = replacementService.processTitle(book, currentChapter.title).text
 
-    fun loadCurrentContent(): Boolean {
-        if (library.content(currentChapter) != null) {
+    val currentContent: String
+        get() = replacementService.processContent(book, library.content(currentChapter).orEmpty()).text
+
+    fun loadCurrentContent(): Boolean = loadContent(currentChapter)
+
+    /** Loads the supplied chapter without consulting the mutable reader cursor again. */
+    fun loadContent(chapter: CoreChapter): Boolean {
+        if (library.content(chapter) != null) {
             error = null
             return true
+        }
+        val localTxtPath = localTxtPath()
+        if (localTxtPath != null) {
+            isLoading = true
+            error = null
+            return try {
+                val content = LocalBookParser.readTextChapter(
+                    localTxtPath,
+                    chapter,
+                    book.charset
+                )
+                library.saveContent(chapter, content)
+                true
+            } catch (throwable: Throwable) {
+                error = throwable.message ?: "本地正文加载失败"
+                false
+            } finally {
+                isLoading = false
+            }
         }
         val service = onlineService
         if (service == null) {
@@ -55,7 +125,7 @@ class ReaderModel(
         isLoading = true
         error = null
         return try {
-            service.loadContent(book, currentChapter)
+            service.loadContent(book, chapter)
             true
         } catch (throwable: Throwable) {
             error = throwable.message ?: "正文加载失败"
@@ -65,8 +135,55 @@ class ReaderModel(
         }
     }
 
+    private fun localTxtPath(): Path? {
+        if (book.origin != "loc_book" || !book.bookUrl.endsWith(".txt", ignoreCase = true)) {
+            return null
+        }
+        return runCatching { Path.of(book.bookUrl) }
+            .getOrNull()
+            ?.toAbsolutePath()
+            ?.normalize()
+            ?.takeIf(Files::isRegularFile)
+    }
+
     val currentPosition: Int
         get() = position
+
+    fun pages(pageSize: Int): List<ReaderPage> {
+        val safePageSize = pageSize.coerceAtLeast(1)
+        if (currentContent.isEmpty()) return listOf(ReaderPage("", 0, 0))
+        return currentContent.chunked(safePageSize).mapIndexed { index, text ->
+            val start = index * safePageSize
+            ReaderPage(text, start, start + text.length)
+        }
+    }
+
+    fun currentPageIndex(pageSize: Int): Int {
+        val availablePages = pages(pageSize)
+        return (position / pageSize.coerceAtLeast(1)).coerceIn(0, availablePages.lastIndex)
+    }
+
+    fun nextPage(pageSize: Int): Boolean {
+        val availablePages = pages(pageSize)
+        val pageIndex = currentPageIndex(pageSize)
+        if (pageIndex >= availablePages.lastIndex) return false
+        position = availablePages[pageIndex + 1].startPosition
+        return true
+    }
+
+    fun previousPage(pageSize: Int): Boolean {
+        val availablePages = pages(pageSize)
+        val pageIndex = currentPageIndex(pageSize)
+        if (pageIndex <= 0) return false
+        position = availablePages[pageIndex - 1].startPosition
+        return true
+    }
+
+    fun autoReadTick(pageSize: Int): ReaderAutoReadResult {
+        if (nextPage(pageSize)) return ReaderAutoReadResult.PAGE_ADVANCED
+        if (nextChapter()) return ReaderAutoReadResult.CHAPTER_ADVANCED
+        return ReaderAutoReadResult.END
+    }
 
     val hasPrevious: Boolean
         get() = currentIndex > chapters.indices.first

@@ -1,10 +1,12 @@
 package io.legado.desktop
 
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreChapter
+import io.legado.core.library.CoreTxtTocRule
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
-import java.nio.CharBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
@@ -12,6 +14,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.ZipFile
+import java.util.regex.Pattern
+import java.util.regex.PatternSyntaxException
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Node
 import org.w3c.dom.NodeList
@@ -28,22 +32,23 @@ data class ParsedLocalBook(
 
 object LocalBookParser {
 
-    fun parse(path: Path): ParsedLocalBook {
+    fun parse(path: Path, tocRules: List<CoreTxtTocRule>? = null): ParsedLocalBook {
         val normalizedPath = path.toAbsolutePath().normalize()
         require(Files.isRegularFile(normalizedPath)) { "Local book does not exist: $normalizedPath" }
 
         return if (normalizedPath.fileName.toString().endsWith(".epub", ignoreCase = true)) {
             parseEpub(normalizedPath)
         } else {
-            parseText(normalizedPath)
+            parseText(normalizedPath, tocRules)
         }
     }
 
-    private fun parseText(path: Path): ParsedLocalBook {
+    private fun parseText(path: Path, tocRules: List<CoreTxtTocRule>?): ParsedLocalBook {
         val decoded = decodeText(Files.readAllBytes(path))
+        val normalized = normalizeLineEndings(decoded.text, decoded.byteOffsets)
         val bookUrl = path.toString()
         val bookName = path.fileName.toString().substringBeforeLast('.', path.fileName.toString())
-        val sections = splitTextIntoChapters(decoded.text, bookUrl)
+        val sections = splitTextIntoChapters(normalized, bookUrl, tocRules)
         return ParsedLocalBook(
             book = CoreBook(
                 bookUrl = bookUrl,
@@ -115,27 +120,71 @@ object LocalBookParser {
         )
     }
 
-    private fun splitTextIntoChapters(text: String, bookUrl: String): List<ParsedLocalChapter> {
-        val lines = text.replace("\r\n", "\n").replace('\r', '\n').lines()
-        val headingIndexes = lines.mapIndexedNotNull { index, line ->
-            if (Constants.CHAPTER_HEADING.matches(line.trim())) index else null
-        }
-        if (headingIndexes.isEmpty()) {
+    private fun splitTextIntoChapters(
+        source: TextWithOffsets,
+        bookUrl: String,
+        tocRules: List<CoreTxtTocRule>?
+    ): List<ParsedLocalChapter> {
+        val normalizedText = source.text
+        val pattern = selectTocPattern(normalizedText, tocRules)
+        if (pattern == null) {
             return listOf(
                 ParsedLocalChapter(
-                    chapter = CoreChapter(bookUrl, "$bookUrl#chapter-0", "正文", 0),
-                    content = text.trim()
+                    chapter = CoreChapter(
+                        bookUrl,
+                        "$bookUrl#chapter-0",
+                        "正文",
+                        0,
+                        start = source.byteOffsets.first(),
+                        end = source.byteOffsets.last()
+                    ),
+                    content = normalizedText.trim()
                 )
             )
         }
 
-        val leadingText = lines.subList(0, headingIndexes.first()).joinToString("\n").trim()
-        val chapters = headingIndexes.mapIndexed { position, headingIndex ->
-            val nextHeading = headingIndexes.getOrNull(position + 1) ?: lines.size
-            val title = lines[headingIndex].trim()
-            val body = lines.subList(headingIndex + 1, nextHeading).joinToString("\n").trim()
+        val matches = pattern.matcher(normalizedText).run {
+            buildList {
+                while (find()) {
+                    if (group().trim().isNotEmpty()) add(Match(start(), end(), group()))
+                }
+            }
+        }
+        if (matches.isEmpty()) {
+            return listOf(
+                ParsedLocalChapter(
+                    chapter = CoreChapter(
+                        bookUrl,
+                        "$bookUrl#chapter-0",
+                        "正文",
+                        0,
+                        start = source.byteOffsets.first(),
+                        end = source.byteOffsets.last()
+                    ),
+                    content = normalizedText.trim()
+                )
+            )
+        }
+
+        val leadingText = normalizedText.substring(0, matches.first().start).trim()
+        val chapters = matches.mapIndexed { position, match ->
+            val nextHeading = matches.getOrNull(position + 1)?.start ?: normalizedText.length
+            val title = match.title.trim()
+            val body = normalizedText.substring(match.end, nextHeading).trim()
+            val chapterStart = if (position == 0 && leadingText.isNotEmpty()) {
+                source.byteOffsets.first()
+            } else {
+                source.byteOffsets[match.start]
+            }
             ParsedLocalChapter(
-                chapter = CoreChapter(bookUrl, "$bookUrl#chapter-$position", title, position),
+                chapter = CoreChapter(
+                    bookUrl,
+                    "$bookUrl#chapter-$position",
+                    title,
+                    position,
+                    start = chapterStart,
+                    end = source.byteOffsets[nextHeading]
+                ),
                 content = body
             )
         }.toMutableList()
@@ -146,22 +195,174 @@ object LocalBookParser {
         return chapters
     }
 
+    /** Reads a local TXT chapter using its Android-compatible byte range. */
+    fun readTextChapter(path: Path, chapter: CoreChapter, charsetName: String? = null): String {
+        val start = requireNotNull(chapter.start) { "TXT chapter start is missing" }
+        val end = requireNotNull(chapter.end) { "TXT chapter end is missing" }
+        require(start >= 0L && end >= start) { "Invalid TXT chapter range: $start..$end" }
+        require(end - start <= Int.MAX_VALUE) { "TXT chapter is too large to read as a String" }
+
+        val normalizedPath = path.toAbsolutePath().normalize()
+        require(Files.isRegularFile(normalizedPath)) { "Local book does not exist: $normalizedPath" }
+        val size = Files.size(normalizedPath)
+        require(end <= size) { "TXT chapter range exceeds file size: $end > $size" }
+        val bytes = ByteArray((end - start).toInt())
+        Files.newByteChannel(normalizedPath).use { channel ->
+            channel.position(start)
+            var offset = 0
+            while (offset < bytes.size) {
+                val read = channel.read(java.nio.ByteBuffer.wrap(bytes, offset, bytes.size - offset))
+                if (read < 0) break
+                offset += read
+            }
+            require(offset == bytes.size) { "Unable to read TXT chapter range" }
+        }
+
+        val charset = charsetName?.let { Charset.forName(it) } ?: detectCharset(bytes)
+        val text = String(bytes, charset)
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        if (chapter.title == "正文") return text
+        val lines = text.lines()
+        val titleIndex = lines.indexOfFirst { it.trim() == chapter.title.trim() }
+        if (titleIndex < 0) return text
+        return lines.mapIndexed { index, line ->
+            if (index == titleIndex) "" else line
+        }
+            .joinToString("\n")
+            .trim()
+    }
+
+    private fun selectTocPattern(text: String, tocRules: List<CoreTxtTocRule>?): Pattern? {
+        val rules = (tocRules ?: defaultTxtTocRules()).filter(CoreTxtTocRule::enable)
+        var maxMatches = 1
+        var selected: Pattern? = null
+        rules.asReversed().forEach { rule ->
+            if (rule.rule.isBlank()) return@forEach
+            val pattern = try {
+                Pattern.compile(rule.rule, Pattern.MULTILINE)
+            } catch (_: PatternSyntaxException) {
+                return@forEach
+            }
+            val matcher = pattern.matcher(text)
+            var lastMatchEnd = 0
+            var matches = 0
+            while (matcher.find()) {
+                if (lastMatchEnd == 0 || matcher.start() - lastMatchEnd > 1000) {
+                    matches++
+                    lastMatchEnd = matcher.end()
+                }
+            }
+            if (matches >= maxMatches) {
+                maxMatches = matches
+                selected = pattern
+            }
+        }
+        return selected
+    }
+
+    private fun defaultTxtTocRules(): List<CoreTxtTocRule> = runCatching {
+        val type = object : TypeToken<List<CoreTxtTocRule>>() {}.type
+        LocalBookParser::class.java.getResourceAsStream("/defaultData/txtTocRule.json")?.use { input ->
+            Gson().fromJson<List<CoreTxtTocRule>>(input.reader(Charsets.UTF_8), type)
+        } ?: emptyList()
+    }.getOrDefault(
+        listOf(
+            CoreTxtTocRule(
+                id = -1L,
+                name = "中文章节",
+                rule = "^[ \\t　]{0,4}第[0-9零一二两三四五六七八九十百千万]+[章节回集卷部篇].{0,30}$",
+                serialNumber = 0
+            ),
+            CoreTxtTocRule(
+                id = -2L,
+                name = "英文章节",
+                rule = "^[ \\t　]{0,4}(?:[Cc]hapter|[Ss]ection|[Pp]art)\\s{0,4}\\d{1,4}.{0,30}$",
+                serialNumber = 1
+            ),
+            CoreTxtTocRule(
+                id = -3L,
+                name = "数字分隔符章节",
+                rule = "^[ \\t　]{0,4}\\d{1,5}[:：,.， 、_—\\-].{1,30}$",
+                serialNumber = 2
+            )
+        )
+    )
+
     private fun decodeText(bytes: ByteArray): DecodedText {
         if (bytes.startsWith(Constants.UTF8_BOM)) {
-            return DecodedText(String(bytes, Constants.UTF8_BOM.size, bytes.size - Constants.UTF8_BOM.size, StandardCharsets.UTF_8), StandardCharsets.UTF_8)
+            return decodedText(bytes, Constants.UTF8_BOM.size, StandardCharsets.UTF_8)
         }
         if (bytes.startsWith(Constants.UTF16_LE_BOM)) {
-            return DecodedText(String(bytes, Constants.UTF16_LE_BOM.size, bytes.size - Constants.UTF16_LE_BOM.size, StandardCharsets.UTF_16LE), StandardCharsets.UTF_16LE)
+            return decodedText(bytes, Constants.UTF16_LE_BOM.size, StandardCharsets.UTF_16LE)
         }
         if (bytes.startsWith(Constants.UTF16_BE_BOM)) {
-            return DecodedText(String(bytes, Constants.UTF16_BE_BOM.size, bytes.size - Constants.UTF16_BE_BOM.size, StandardCharsets.UTF_16BE), StandardCharsets.UTF_16BE)
+            return decodedText(bytes, Constants.UTF16_BE_BOM.size, StandardCharsets.UTF_16BE)
         }
         return try {
-            DecodedText(decodeStrict(bytes, StandardCharsets.UTF_8), StandardCharsets.UTF_8)
+            decodedText(bytes, 0, StandardCharsets.UTF_8)
         } catch (_: CharacterCodingException) {
             val fallback = Charset.forName("GB18030")
-            DecodedText(decodeStrict(bytes, fallback), fallback)
+            decodedText(bytes, 0, fallback)
         }
+    }
+
+    private fun detectCharset(bytes: ByteArray): Charset = when {
+        bytes.startsWith(Constants.UTF8_BOM) -> StandardCharsets.UTF_8
+        bytes.startsWith(Constants.UTF16_LE_BOM) -> StandardCharsets.UTF_16LE
+        bytes.startsWith(Constants.UTF16_BE_BOM) -> StandardCharsets.UTF_16BE
+        else -> try {
+            decodeStrict(bytes, StandardCharsets.UTF_8)
+            StandardCharsets.UTF_8
+        } catch (_: CharacterCodingException) {
+            Charset.forName("GB18030")
+        }
+    }
+
+    private fun decodedText(bytes: ByteArray, contentStart: Int, charset: Charset): DecodedText {
+        val text = decodeStrict(
+            bytes.copyOfRange(contentStart, bytes.size),
+            charset
+        )
+        val offsets = LongArray(text.length + 1)
+        var charIndex = 0
+        var byteOffset = contentStart.toLong()
+        while (charIndex < text.length) {
+            val codePoint = text.codePointAt(charIndex)
+            val charCount = Character.charCount(codePoint)
+            val encodedLength = String(Character.toChars(codePoint)).toByteArray(charset).size
+            repeat(charCount) { offset -> offsets[charIndex + offset] = byteOffset }
+            charIndex += charCount
+            byteOffset += encodedLength
+        }
+        offsets[text.length] = byteOffset
+        return DecodedText(text, charset, offsets)
+    }
+
+    private fun normalizeLineEndings(text: String, byteOffsets: LongArray): TextWithOffsets {
+        val normalized = StringBuilder(text.length)
+        val offsets = ArrayList<Long>(text.length + 1)
+        offsets += byteOffsets[0]
+        var index = 0
+        while (index < text.length) {
+            val current = text[index]
+            if (current == '\r') {
+                normalized.append('\n')
+                if (index + 1 < text.length && text[index + 1] == '\n') {
+                    index += 2
+                    offsets += byteOffsets[index]
+                } else {
+                    index++
+                    offsets += byteOffsets[index]
+                }
+            } else {
+                normalized.append(current)
+                index++
+                offsets += byteOffsets[index]
+            }
+        }
+        return TextWithOffsets(normalized.toString(), offsets.toLongArray())
     }
 
     private fun decodeStrict(bytes: ByteArray, charset: Charset): String = charset.newDecoder()
@@ -257,7 +458,13 @@ object LocalBookParser {
         return baseDirectory.resolve(decoded ?: withoutFragment).normalize().toString().replace('\\', '/')
     }
 
-    private data class DecodedText(val text: String, val charset: Charset)
+    private data class DecodedText(
+        val text: String,
+        val charset: Charset,
+        val byteOffsets: LongArray
+    )
+
+    private data class TextWithOffsets(val text: String, val byteOffsets: LongArray)
 
     private data class ManifestItem(val href: String, val mediaType: String) {
         val isDocument: Boolean
@@ -265,10 +472,6 @@ object LocalBookParser {
     }
 
     private object Constants {
-        val CHAPTER_HEADING = Regex(
-            "^(第[0-9零一二三四五六七八九十百千万两]+[章节回集卷部篇].*|(?:chapter|chapter\\s+)[0-9零一二三四五六七八九十百千万两]+.*)$",
-            RegexOption.IGNORE_CASE
-        )
         val BLOCK_ELEMENTS = setOf(
             "address", "article", "aside", "blockquote", "br", "div", "dl", "dt", "dd",
             "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -281,6 +484,8 @@ object LocalBookParser {
     }
 
     private fun localName(node: Node): String = node.localName ?: node.nodeName.substringAfter(':')
+
+    private data class Match(val start: Int, val end: Int, val title: String)
 }
 
 private fun ByteArray.startsWith(prefix: ByteArray): Boolean = size >= prefix.size &&

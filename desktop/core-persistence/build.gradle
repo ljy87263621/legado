@@ -8,6 +8,7 @@ kotlin {
 
 dependencies {
     implementation project(':modules:core')
+    implementation(libs.gson)
     implementation(libs.sqlite.jdbc)
     testImplementation(libs.junit)
 }

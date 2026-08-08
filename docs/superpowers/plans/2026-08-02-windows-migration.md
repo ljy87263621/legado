@@ -32,6 +32,36 @@
 4. Feature gate: 搜索、发现、RSS、导入导出、更新下载、朗读/TTS、脚本、同步、设置和调试工具完成迁移。
 5. Distribution gate: 生成无需预装 Java/Node/开发环境的 Windows Portable 目录，并在干净用户目录启动验证。
 
+## Verified Current Increment
+
+阅读记录现在提供桌面 GUI 的月度热力图和 Markdown 导出动作。热力图按 Android 兼容的 `yyyyMMdd` day key 聚合指定月份，负时长钳制为零，使用正确的月份天数和周一首列布局，按 12 小时封顶映射 Android 兼容的 0-5 级，并支持上/下月导航（不超过当前月）、本月总时长和点击日期查看累计时长；网格高度按实际行数计算，31 天月份不会被裁剪。`ReadRecordHeatmapModelTest` 覆盖月份过滤、时长聚合、负时长钳制、等级映射和 31 天网格布局约束。Markdown 导出仍以 UTF-8 写出总览、按书汇总和会话明细，并保留 day key 与 epoch seconds。该 Windows 子集只覆盖桌面 `CoreLibrary` 当前记录，不实现 Android 的长按日期删除、按日期筛选阅读列表、原生 Header/RecyclerView 交互、Markdown 导入/同步、WebDAV 阅读记录上传、生命周期聚合、通知或完整统计语义；Windows 使用 Compose/SQLite/CoreLibrary，Android 使用 Room、`ReadRecordActivity` 和原生 `MonthHeatMapView`。
+
+当前 Windows 分支已验证一组可独立运行的阅读器能力：滚动与固定容量分页、章节前后导航、阅读位置恢复、方向键/空格/Ctrl+方向键/S 键命令、自动阅读的页内和章节推进，以及 1-120 秒自动阅读间隔设置。阅读设置已写入 SQLite，旧 `desktop_settings` 表会自动补列，旧版 JSON 备份缺少自动阅读间隔时保留默认值 10 秒。书签页面支持搜索、摘录、删除和恢复到章节正文位置；阅读记录页面支持按书汇总、时长/书籍/会话统计、搜索、排序、打开、删除、月度热力图和 UTF-8 Markdown 导出。热力图 Windows 子集按 `yyyyMMdd` 聚合月份、使用周一首列和闰年月份长度、执行负时长钳制与 Android 兼容 0-5 级/12 小时封顶、支持当前月以前的月份导航和日期时长查看；模型测试覆盖这些规则以及 31 天月份的网格高度约束。Android 的长按日期删除、按日期筛选、原生 Header/RecyclerView 交互、Markdown 导入/同步、WebDAV 阅读记录上传、生命周期聚合、通知和完整统计仍未实现。替换规则已具备核心规则模型、按标题/正文和书籍范围执行、超时保护、SQLite 持久化、备份恢复、单条测试以及桌面规则管理入口。TXT 导入已支持 Android 目录规则模型、启用规则筛选、正则匹配数量选择、匹配间距过滤、前言合并、无匹配正文兜底、SQLite 持久化和备份恢复，并随桌面包携带完整默认规则集；TXT 规则现在还有桌面增删改、启用切换、JSON 导入导出和设置入口，本地章节保存原始字节范围，缓存缺失时可按范围延迟读取；超大文件性能和 Android 全部拆章细节仍未实现。字典查词现在具备可测试的 Windows 子集：字典规则可在桌面管理，查词支持 `{{key}}` URL 替换、原始响应、共享 URL options 的 `method`、`body`、`charset`、`headers` 子集、CSS/JSONPath/基础正则提取、启用规则排序、逐条错误保留，以及 CSS 选择器多命中结果按换行合并；完整 Android `AnalyzeRule` 组合语义、复杂动态 URL、嵌入 JavaScript、完整 XPath/JSON/JS `init` 和 WebView/browser 能力仍未实现。Windows 阅读页已接入基于 PowerShell `System.Speech.Synthesis.SpeechSynthesizer` 的系统朗读控制，支持播放、暂停、继续、停止、换章清理和错误显示；HTTP TTS、多引擎配置和 Android 完整朗读语义仍未实现。书籍详情现在可搜索并按同名同作者筛选来源，保留当前来源，切换前加载新书详情和目录，成功后保留书架分组，失败时回滚临时替代书；该功能通过模型测试并接入桌面详情页。书籍发现现在支持发现书源筛选与选择、`exploreUrl`、`ruleExplore`、静态分类选项、刷新、页码加载、下一页追加去重、加入书架和进入详情；动态脚本、来源排名和完整 Android explore/review 语义仍未迁移。章节详情页支持勾选章节、下载未缓存章节或选中章节，显示缓存/成功/失败结果，并提供持久化任务的进度、暂停、继续和取消控制；应用启动会把遗留的 `IDLE/RUNNING` 任务恢复为 `PAUSED`，详情页重新打开同一本书时可继续未完成章节，失败章节会重新尝试，退出时会等待下载 worker 收尾。`modules:core`、`desktop:core-persistence` 和 `desktop:app` 测试通过，Compose Desktop `packageExe` 生成了 `desktop/app/build/compose/binaries/main/exe/Legado-0.1.1.exe`。新增 `desktop/packaging/windows/portable.ps1` 可构建并检查目录版，验证 `runtime/bin/server/jvm.dll`、JAR 和 jpackage 元数据，并在临时 `LEGADO_DATA_DIR` 中启动后等待 `legado.db` 创建；`test-portable.ps1` 覆盖不完整目录拒绝和完整目录通过。
+
+这只是迁移增量，不代表 Android 功能完整迁移。登录 UI、WebView/CAPTCHA、Android WebView Cookie 共享、完整脚本扩展、下载更新、媒体阅读器、HTTP TTS、多引擎朗读配置、WebDAV 全量同步、替换规则和 TXT 目录规则的 Android 完整语义、字典的完整 Android `AnalyzeRule` 语义、干净用户配置升级和签名发布仍需后续工作；桌面书源变量、source-aware HTTP、持久 Cookie、会话 Cookie 和 `enabledCookieJar` 子集已补齐，并在本地 ZIP 备份中保存持久变量与 Cookie（会话 Cookie 不导出）。`yuedu://` 和 `legado://` 的 Windows 当前用户协议关联子集，以及支持的本地书籍、图片、漫画和音频文件扩展名关联子集已补齐，但不等同于 Android intent/activity/SAF/Provider 语义。TXT 桌面管理和本地字节范围读取、字典查词和本地音频阅读 Windows 子集已补齐，但超大文件性能、Android 全部拆章细节、字典高级规则语义和 Android 音频媒体语义仍未完成。章节下载任务已经支持 SQLite 持久化、退出恢复、重新打开书籍后续传，以及本地 ZIP 备份/恢复；WebDAV 目前只覆盖远程 ZIP 备份/恢复，不覆盖进度/图片同步、后台同步、远程书库或冲突解决；Android 原生下载记录兼容和后台通知仍未完成。
+
+本阶段还完成了书源编辑器中的请求检查子集：可异步执行一次解析后的 HTTP 请求，默认 GET，并支持共享 URL options 的 `method`、`body`、`charset`、`headers` 子集；同时解析当前书源动态 `header` 和 source variables，按书源复用持久/会话 Cookie，接受 JSON 或逐行 `name: value` 手工 headers，并展示请求元数据、最终 URL、状态码、响应 headers、响应正文和传输/非 2xx 错误。该能力由 `SourceDebugModelTest`、`CoreSourceHttpClientTest` 和运行时数据测试覆盖；管理桥另提供受限的 `/bookSourceDebug` WebSocket 请求日志。整体仍不宣称 Android 完整 source debug：逐规则 trace、登录 UI、WebView/WebView2 验证、浏览器会话共享和完整动态脚本调试仍是后续差异。
+
+本阶段还实现了书源编辑器的外部浏览器验证启动子集：模型对验证地址执行 HTTP(S)、主机名和长度校验，再通过可注入 launcher 打开系统默认浏览器；GUI 提供对应的“在浏览器中打开验证”动作。它不等同于 Android `WebViewActivity`：不嵌入 WebView2、不接收浏览器结果、不共享 Cookie/登录状态、不执行 CAPTCHA 回调，也不实现 `getVerificationResult` 或 `refetchAfterSuccess`。
+
+本阶段还补齐了本地图片/CBZ 阅读的 Windows 子集：桌面文件导入支持单张图片和 `.cbz`/`.zip`，会过滤受支持的图片条目、自然排序、按目录生成章节、将根目录图片归入 `正文`，并保存不含伪造正文内容的图片章节；重复导入会保留已有阅读进度。阅读路由只把 `loc_book` 图片书送入本地图片阅读器，避免把在线图片书 URL 当作本地路径解析。GUI 支持图片显示、章节/文件名和全局页码、上一页/下一页、上一章/下一章、50%-300% 缩放、重置缩放、保存阅读位置，以及左/右/空格/Ctrl+方向键/S 键操作。网络漫画源、完整图片规则、WebView/WebView2、长条/双页模式、触控手势、滤镜、预取/缓存和 WebDAV/远程图片库仍未迁移。
+
+本阶段还扩展了本地 HTTP/WebSocket 管理桥接的 Windows 子集：设置页可配置 HTTP 端口并启动/停止服务，显示并复制 HTTP 与 WebSocket 两个 loopback 地址，同时列出当前支持的路由；HTTP 服务使用端口 `N`，WebSocket 服务使用 `N + 1`，两者只绑定 `127.0.0.1`。HTTP 使用 Android `ReturnData` 兼容的 `isSuccess`、`errorMsg`、`data` JSON 包，提供 `/health`、`/getBookshelf`、`/getBookSources`、`/getGroups`、兼容 `bookUrl`/`url` 参数的 `/getChapterList`、`/getBookContent?url=...&index=...` 和 `/getReadConfig`；WebSocket 提供 `/searchBook` 和 `/bookSourceDebug`，前者返回扁平的 Android/Web 兼容 `SeachBook` 数组，后者输出书源、请求 URL、请求 method、请求 headers、请求 body、状态码、响应 headers、响应正文和错误等桌面可提供的调试日志后关闭连接。正文端点只读取桌面 `CoreLibrary` 中已经缓存的章节正文，不触发在线抓取；章节或正文缺失时返回错误。`POST /saveBook` 新增接受 Android-compatible 的完整 `CoreBook` JSON，要求非空白 `bookUrl` 后通过 `CoreLibrary.saveBook` 替换或写入书籍；桌面实现不执行 Android `AppWebDav.uploadBookProgress` 副作用。`POST /saveBookProgress` 接受 Android `BookProgress` JSON（`name`、`author`、`durChapterIndex`、`durChapterPos`、`durChapterTime`、可选 `durChapterTitle`），按 `name + author` 匹配已有桌面书籍，并通过 `CoreLibrary.saveBook` 保存四个阅读进度字段。另一个受限写接口 `POST /saveReadConfig` 仅接受 `modules:web` 的 `webReadConfig` schema，校验必填字段和范围后以规范化 JSON 保存；`CoreLibrary` 通过 SQLite 的独立 `desktop_web_read_config` 单行表持久化，因此配置可跨数据库重开和管理服务重启保留，但 HTTP 端点只在本地服务运行期间可用。该能力的 GUI 边界仍是设置页的管理服务区：端口、启动/停止、HTTP/WebSocket endpoint 复制和支持路由披露均可见。服务与模型分别由真实 loopback 请求、WebSocket 协议/搜索响应测试、SQLite/CoreLibrary 重启测试以及端口/生命周期/设置路由披露测试覆盖，包含完整书籍成功保存、畸形 JSON、空白 `bookUrl`、缺少/越界字段、未知书籍和未支持 POST 路由拒绝。`/bookSourceDebug` 只是桌面调试日志子集，不等价于 Android 完整 WebView/XPath/JS/CAPTCHA 调试状态机；其他 POST/导入写接口、静态 web 资源、认证、局域网暴露、图片/封面、完整 Android `Book.ReadConfig`/`ReadBookConfig` 语义、替换规则接口、在线正文抓取、Android WebDAV 上传/同步副作用、WebView/WebView2 以及 Android 服务通知行为仍未迁移。
+
+本阶段还完成了本地音频阅读的 Windows 子集：桌面导入器识别单个本地 `.wav`、`.aif`、`.aiff`、`.au` 或 `.snd` 文件，将其保存为兼容 Android 概念的本地音频书和一个可播放章节；音频阅读页提供播放/暂停、停止、章节选择、前后章节、保存进度和键盘操作。`AudioReaderModel` 通过可注入的播放会话边界进行测试，生产环境使用 JDK `javax.sound.sampled` Java Sound；换章和退出阅读页会释放当前播放会话，进度通过 `CoreLibrary` 保存。该切片不承诺 MP3/M4A，实际可解码编码取决于 JDK 的 Java Sound provider；Android Media3/ExoPlayer、远程音频、后台播放服务、系统媒体通知、音频焦点、媒体按键、Wake Lock、睡眠定时器、网络 Cookie 和音频缓存仍未迁移。
+
+本阶段新增了欢迎页和首次运行设置的 Windows 子集。启动路由由 `DesktopStartupRoute` 决定：未完成设置的新 SQLite 数据目录进入 `欢迎` 页面，点击“开始使用”后由 `WelcomeModel` 写入 `desktop_setup` 完成标记并进入书架；关闭并重开数据库后标记仍然有效。没有该标记但已有书籍的旧数据库会按已初始化处理，外部订阅导入启动请求仍直接进入订阅页。`AppRouteTest` 覆盖路由和完成动作，`SqliteCoreLibraryTest` 覆盖首次状态、重启持久化和旧书架兼容；Compose GUI 真实挂载 `WelcomeScreen`，Portable 启动验证作为最终可执行证据。该切片只确认 Windows 原生壳已被用户初始化，不迁移 Android 欢迎页中的偏好、权限提示、默认书源初始化或服务设置。
+
+本阶段还完成了 WebDAV 远程备份/恢复的 Windows 子集。设置页提供 URL、用户名、密码、远端文件名、刷新远端列表、上传本地 ZIP、选择远端备份和恢复动作；配置保存到 SQLite 的单行 `desktop_webdav_config` 表，重新打开数据库后仍可加载。实现使用 Java `HttpClient` 执行带超时且禁用重定向的 `PROPFIND`、`PUT` 和 `GET`，凭据使用 Basic Authentication；DAV XML 解析关闭外部实体/DTD。远端文件名仅允许安全的单层 `backup*.zip`，避免把备份动作扩展成任意路径写入；恢复复用已有本地 ZIP 导入逻辑。`WebDavBackupModelTest`、`WebDavSettingsModelTest` 和 `SqliteCoreLibraryTest` 覆盖 URL 规范化、配置持久化、列表/上传/下载/恢复、危险文件名、认证失败以及设置页操作状态。该子集不实现 Android 的双向阅读进度同步、后台同步、远程书库、冲突解决、图片同步、Android 服务/通知语义或凭据加密偏好。
+
+本阶段还完成了 Windows URL 协议关联的桌面子集。启动时尝试注册 `yuedu://` 和 `legado://`，设置页提供“注册协议关联”按钮，可手动重试并显示成功状态或 `reg.exe` 错误。实现按当前 `Legado.exe` 路径生成 UTF-16LE/BOM `.reg` 内容，通过 Windows System32 `reg.exe import` 写入当前用户 `HKCU\Software\Classes` 协议项，并使用锁避免并发注册；模型测试覆盖成功和失败状态保留。该能力不需要管理员权限，协议注册失败不会阻止 Portable 应用启动。
+
+Android 通过 intent filter 和 Activity 路由处理这两个 URI；Windows 使用当前可执行文件与每用户注册表项，因此不承诺 Android 的 intent 解析、Activity 返回栈和生命周期语义。支持的本地文件扩展名关联已作为独立 Windows 桌面集成切片完成，Android 文件/内容 Intent、URI 权限和 Provider 语义仍按下一段说明保留为差异。
+
+本阶段还完成了 Windows 本地文件扩展名关联的桌面子集。启动时尝试为 `.txt`、`.epub`、`.bmp`、`.gif`、`.jpeg`、`.jpg`、`.png`、`.webp`、`.cbz`、`.zip`、`.wav`、`.aif`、`.aiff`、`.au` 和 `.snd` 注册当前用户 `HKCU\Software\Classes` 关联，设置页提供“注册文件关联”按钮、成功/失败状态和重试。每个扩展名写入扩展名键、Legado ProgID 及 `shell\open\command`，命令使用当前 `Legado.exe` 和 `%1` 文件路径；`.reg` 使用 UTF-16LE/BOM 并通过 System32 `reg.exe import` 导入，不需要管理员权限，失败不阻止 Portable 启动。
+
+关联文件启动参数会被解析为独立的本地文件请求，排除 `--data-dir` 等选项值、URL、相对路径和不支持的扩展名。启动导入复用 `LocalBookImporter`，成功后打开对应的文本、图片或音频阅读器，失败则保留桌面壳并显示导入错误。请求解析、注册表命令/扩展名清单、注册模型状态、启动路由和导入模型均有聚焦测试。Android 通过文件/内容 Intent、URI 权限、Provider 流和 Activity 生命周期处理文件打开；Windows 只实现当前用户文件系统路径和桌面解析器边界，不承诺 Android SAF、Provider 权限、分享 Intent、Activity 返回栈、后台导入或网络书籍文件语义。
+
 ## Task 1: Establish Migration Inventory and Shared-Core Boundaries
 
 **Files:**
@@ -138,8 +168,8 @@
 
 - [ ] Add one failing test per reader capability before implementation.
 - [ ] Implement and verify text reader pagination, progress and TOC first.
-- [ ] Implement and verify source-driven content, replacement rules, bookmarks and themes.
-- [ ] Implement and verify manga/image, RSS, audio/TTS and browser verification adapters.
+- [ ] Implement and verify source-driven content, Android-compatible replacement-rule edge cases, bookmarks and themes.
+- [ ] Continue manga/image parity beyond the verified local image/CBZ subset, and implement RSS, audio/TTS and browser verification adapters.
 - [ ] Run the full desktop/core test suites and perform keyboard/mouse smoke tests.
 
 ## Task 7: Package a Portable Windows Release

@@ -11,6 +11,7 @@ kotlin {
 dependencies {
     implementation project(':modules:core')
     implementation project(':desktop:core-persistence')
+    implementation(libs.gson)
     implementation(compose.desktop.currentOs)
     implementation(compose.runtime)
     implementation(compose.foundation)
@@ -18,6 +19,13 @@ dependencies {
     implementation(compose.materialIconsExtended)
     implementation(compose.ui)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.jsoup)
+    implementation(libs.nanohttpd.websocket)
+    implementation("org.openjfx:javafx-base:${libs.versions.javafx.get()}:win")
+    implementation("org.openjfx:javafx-graphics:${libs.versions.javafx.get()}:win")
+    implementation("org.openjfx:javafx-controls:${libs.versions.javafx.get()}:win")
+    implementation("org.openjfx:javafx-swing:${libs.versions.javafx.get()}:win")
+    implementation("org.openjfx:javafx-web:${libs.versions.javafx.get()}:win")
     testImplementation(libs.junit)
 }
 
@@ -27,11 +35,21 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe)
             packageName = 'Legado'
-            packageVersion = '0.1.0'
+            packageVersion = '0.1.1'
+            modules('java.net.http', 'java.sql', 'jdk.httpserver')
         }
     }
 }
 
 tasks.withType(Test).configureEach {
     useJUnit()
+}
+
+tasks.named('processResources') {
+    from(rootProject.file('app/src/main/assets/web')) {
+        include 'index.html'
+        include 'favicon.ico'
+        include 'uploadBook/index.html'
+        into 'web'
+    }
 }

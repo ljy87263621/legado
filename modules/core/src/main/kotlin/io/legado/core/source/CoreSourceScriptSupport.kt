@@ -5,6 +5,7 @@ import com.google.gson.JsonParser
 import io.legado.core.library.CoreBookSource
 import io.legado.core.library.CoreBook
 import io.legado.core.library.CoreChapter
+import io.legado.core.library.CoreLibrary
 import java.util.LinkedHashMap
 
 /** JVM-safe support for the script fragments used by book-source rules. */
@@ -15,12 +16,13 @@ internal object CoreSourceScriptSupport {
         source: CoreBookSource,
         ruleField: String,
         rawRule: String,
-        bindings: Map<String, Any?> = emptyMap()
+        bindings: Map<String, Any?> = emptyMap(),
+        library: CoreLibrary? = null
     ): Any? {
         val script = extractScript(rawRule) ?: rawRule
         return runtime.evaluate(
             script = script,
-            bindings = bindings,
+            bindings = mapOf("source" to (library?.let { CoreScriptSourceBinding(source, it) } ?: source)) + bindings,
             sharedLibrary = source.jsLib,
             context = CoreScriptContext(
                 sourceUrl = source.bookSourceUrl,
@@ -36,7 +38,8 @@ internal object CoreSourceScriptSupport {
         keyword: String,
         page: Int,
         bindings: Map<String, Any?> = emptyMap(),
-        ruleField: String
+        ruleField: String,
+        library: CoreLibrary? = null
     ): String {
         val value = if (extractScript(template) != null) {
             evaluate(
@@ -44,12 +47,13 @@ internal object CoreSourceScriptSupport {
                 ruleField = ruleField,
                 rawRule = template,
                 bindings = mapOf(
-                    "source" to source,
+                    "source" to (library?.let { CoreScriptSourceBinding(source, it) } ?: source),
                     "baseUrl" to source.bookSourceUrl,
                     "key" to keyword,
                     "keyword" to keyword,
                     "page" to page
-                ) + bindings
+                ) + bindings,
+                library = library
             )?.toString().orEmpty()
         } else {
             template
@@ -62,7 +66,8 @@ internal object CoreSourceScriptSupport {
         ruleField: String,
         script: String,
         book: CoreBook,
-        bindings: Map<String, Any?> = emptyMap()
+        bindings: Map<String, Any?> = emptyMap(),
+        library: CoreLibrary? = null
     ): CoreBook {
         val scriptBody = extractScript(script) ?: script
         val envelope = """
@@ -77,7 +82,11 @@ internal object CoreSourceScriptSupport {
             source = source,
             ruleField = ruleField,
             rawRule = envelope,
-            bindings = mapOf("book" to book, "source" to source) + bindings
+            bindings = mapOf(
+                "book" to book,
+                "source" to (library?.let { CoreScriptSourceBinding(source, it) } ?: source)
+            ) + bindings,
+            library = library
         )
         val result = evaluated as? Map<*, *> ?: return book
         val updated = (result["result"] as? Map<*, *>)
@@ -91,7 +100,8 @@ internal object CoreSourceScriptSupport {
         ruleField: String,
         script: String,
         chapter: CoreChapter,
-        bindings: Map<String, Any?> = emptyMap()
+        bindings: Map<String, Any?> = emptyMap(),
+        library: CoreLibrary? = null
     ): Pair<CoreChapter, Any?> {
         val scriptBody = extractScript(script) ?: script
         val envelope = """
@@ -106,7 +116,11 @@ internal object CoreSourceScriptSupport {
             source = source,
             ruleField = ruleField,
             rawRule = envelope,
-            bindings = mapOf("chapter" to chapter, "source" to source) + bindings
+            bindings = mapOf(
+                "chapter" to chapter,
+                "source" to (library?.let { CoreScriptSourceBinding(source, it) } ?: source)
+            ) + bindings,
+            library = library
         )
         val result = evaluated as? Map<*, *> ?: return chapter to evaluated
         val updated = (result["result"] as? Map<*, *>)
@@ -117,7 +131,8 @@ internal object CoreSourceScriptSupport {
     fun headers(
         source: CoreBookSource,
         baseUrl: String,
-        bindings: Map<String, Any?> = emptyMap()
+        bindings: Map<String, Any?> = emptyMap(),
+        library: CoreLibrary? = null
     ): Map<String, String> {
         val raw = source.header?.takeIf(String::isNotBlank) ?: ""
         val value = if (extractScript(raw) != null) {
@@ -126,9 +141,10 @@ internal object CoreSourceScriptSupport {
                 ruleField = "header",
                 rawRule = raw,
                 bindings = mapOf(
-                    "source" to source,
+                    "source" to (library?.let { CoreScriptSourceBinding(source, it) } ?: source),
                     "baseUrl" to baseUrl
-                ) + bindings
+                ) + bindings,
+                library = library
             )
         } else {
             raw

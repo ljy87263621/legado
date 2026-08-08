@@ -28,14 +28,16 @@ class ReaderSettingsModel(
         lineSpacingExtra: Int = settings.lineSpacingExtra,
         theme: CoreReaderTheme = settings.theme,
         pageMode: CoreReaderPageMode = settings.pageMode,
-        autoRead: Boolean = settings.autoRead
+        autoRead: Boolean = settings.autoRead,
+        autoReadSpeedSeconds: Int = settings.autoReadSpeedSeconds
     ) {
         settings = settings.copy(
             textSize = textSize.coerceIn(8, 72),
             lineSpacingExtra = lineSpacingExtra.coerceIn(0, 48),
             theme = theme,
             pageMode = pageMode,
-            autoRead = autoRead
+            autoRead = autoRead,
+            autoReadSpeedSeconds = autoReadSpeedSeconds.coerceIn(1, 120)
         )
         library.saveReaderSettings(settings)
     }
