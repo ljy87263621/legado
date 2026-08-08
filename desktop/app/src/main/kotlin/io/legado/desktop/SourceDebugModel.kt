@@ -26,6 +26,7 @@ data class SourceDebugResult(
     val requestHeaders: Map<String, String> = emptyMap(),
     val requestBody: String? = null,
     val statusCode: Int? = null,
+    val sessionStatus: SourceSessionStatus = SourceSessionStatus.TRANSPORT_ERROR,
     val responseHeaders: Map<String, List<String>> = emptyMap(),
     val body: String = "",
     val error: String? = null
@@ -88,12 +89,16 @@ class SourceDebugModel(
                 requestHeaders = httpRequest.headers,
                 requestBody = httpRequest.body,
                 statusCode = response.statusCode,
+                sessionStatus = SourceSessionAssessment.classify(response.statusCode, response.url, response.body),
                 responseHeaders = response.headers,
                 body = response.body,
                 error = response.statusCode.takeUnless { it in 200..299 }?.let { "HTTP $it" }
             )
         } catch (error: Throwable) {
-            SourceDebugResult(error = error.message ?: error::class.java.simpleName)
+            SourceDebugResult(
+                sessionStatus = SourceSessionStatus.TRANSPORT_ERROR,
+                error = error.message ?: error::class.java.simpleName
+            )
         }
     }
 

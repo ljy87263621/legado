@@ -44,16 +44,13 @@ Status values: `baseline` means present in Android, `web-partial` means exposed 
 | Files | Android `DocumentFile`/SAF | Windows path, file picker, drag/drop and portable mode |
 | Notifications | Android notifications/tile | Windows toast or in-app task center |
 
-## First Migration Order
+## Current Migration Plan
 
-1. Data model and rule/parser contracts.
-2. SQLite/backup compatibility.
-3. Desktop shell and bookshelf read-only view.
-4. HTTP/source parsing and source editor.
-5. Text reader, TOC, progress and bookmarks.
-6. Search/discovery, updates, import/export and RSS.
-7. Browser verification, scripts, manga/images, audio and TTS.
-8. Settings, sync, notifications, packaging and compatibility audit.
+The original migration order is complete as a historical roadmap. The active
+increment is source browser session sharing: classify login-required responses,
+then connect the existing JavaFX Cookie capture to source requests and expose
+an explicit re-login path. Detailed interfaces and acceptance criteria live in
+`source-browser-session-design.md`.
 
 ## Verified Windows Evidence
 
@@ -84,7 +81,10 @@ This is a diagnostic request-inspection subset, not Android source-debug parity.
 
 The Windows core stores book-source variables by source URL and stores persistent Cookies by domain, path and name in SQLite. Source scripts can read and update variables; unset reads return an empty string and assigning `null` removes a variable. Source-aware search, book details, chapter refresh, content loading and source debugging resolve source headers and URLs with the same library-backed runtime. Cookies support persistent `Max-Age`/`Expires` entries, in-memory session entries, domain/path matching, manual Cookie preservation and the source's `enabledCookieJar` switch. Persistent source variables and Cookies are included in local ZIP backup/restore; session Cookies are deliberately excluded.
 
-This is a Windows runtime subset, not Android login/WebView parity. Browser verification uses an embedded JavaFX WebView with explicit Cookie capture and source-aware re-fetch; there is no embedded WebView2 profile, CAPTCHA callback, login UI, Android WebView cookie sharing, or Android browser-result bridge.
+This is a Windows runtime subset, not Android login/WebView parity. The next
+increment is specified in `source-browser-session-design.md`; WebView2,
+CAPTCHA callbacks, Android WebView cookie sharing and the Android browser-result
+bridge remain outside the current target.
 
 ## Embedded Browser Verification Subset
 

@@ -1,6 +1,6 @@
 # Legado Windows Compatibility Matrix
 
-Date: 2026-08-06
+Date: 2026-08-09
 
 This matrix describes the current Windows migration boundary. `verified` means
 there is executable test or packaged-launch evidence. `desktop-partial` means a
@@ -38,7 +38,7 @@ is a Compose Desktop application backed by `modules:core` and
 | Online source XPath rules | Static HTML XPath for book info, TOC, content, search and discovery; `@XPath:` and XPath-shaped paths, relative record/init paths, `@href`/`@src`-style attribute extraction and basic `%%` interleaving | `CoreXPathRuleSupportTest`, `OnlineBookServiceTest`, `BookSourceSearchTest` | desktop-partial | Controlled parser subset only; no complete Android `AnalyzeRule` composition, JavaScript/init execution, WebView-rendered content, browser verification, or full XPath function/node parity |
 | Source scripts | Restricted Rhino JVM subset for supported `@js:`/`<js>` rules, dynamic URL/header evaluation, source variables and source-aware Cookie injection | `CoreScriptRuntimeTest`, `CoreSourceScriptServiceTest`, `BookSourceSearchTest`, `SourceDebugModelTest`, `CoreSourceHttpClientTest` | desktop-partial | Login UI/WebView session sharing, full script extensions and browser-dependent rules remain absent; URL options are limited to the shared non-browser subset |
 | Source request debugging | One resolved HTTP request with default GET or supported URL-option method/body/charset/headers, dynamic/manual headers, request metadata, response inspection and error reporting; management bridge also exposes a constrained `/bookSourceDebug` WebSocket request-log route | `SourceDebugModelTest`, `DesktopManagementWebSocketTest` | desktop-partial | No complete per-rule trace or full Android debugger; the WebSocket route is only a desktop request-log subset |
-| Browser verification | Validated HTTP(S) URL opens a JavaFX embedded browser; explicit completion stores cookies and re-fetches through the source-aware HTTP client | `EmbeddedBrowserVerificationModelTest`, `SourceModelTest`, portable distribution verification | desktop-partial | This is not Android WebView/WebView2 parity: no complete browser profile bridge, CAPTCHA callback, `webJs` runtime or Android result-return semantics |
+| Browser verification | Validated HTTP(S) URL opens a JavaFX embedded browser; explicit completion stores cookies and re-fetches through the source-aware HTTP client; source request debugging now classifies authenticated, login-required, HTTP-error and transport-error responses | `EmbeddedBrowserVerificationModelTest`, `SourceModelTest`, `SourceSessionAssessmentTest` | desktop-partial | Detailed follow-up design is in `source-browser-session-design.md`; browser login entry, automatic re-login and WebView2, CAPTCHA callback, `webJs` runtime and Android result-return semantics remain absent |
 | Network HTTP | JVM `HttpClient` boundary used by source/search/debug/update/download/WebDAV subsets, with persistent/session source-aware Cookie storage and source-variable headers/URLs | Core and desktop model tests | desktop-partial | Login UI/WebView session sharing, proxy parity, retries and all Android network extensions are incomplete |
 
 ## Desktop Integration and Data
@@ -69,7 +69,8 @@ is a Compose Desktop application backed by `modules:core` and
 ## Overall Result
 
 The current branch has a verified, distributable Windows reader and a broad set
-of tested desktop subsets. It is **not full Android parity**. The highest-risk
+of tested desktop subsets. It is **not full Android parity**. The active next
+increment is source browser session sharing; the highest-risk
 remaining areas are login UI and WebView session sharing, complete Android rule
 and browser semantics, remote/media services, full WebDAV synchronization, the
 complete Android HTTP/WebSocket API, Android regression evidence, clean-profile upgrade
