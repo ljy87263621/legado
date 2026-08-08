@@ -1,6 +1,6 @@
 # Source Browser Session Design
 
-**Status:** in progress; response classification increment implemented
+**Status:** in progress; request-debug re-login increment implemented
 
 **Goal:** Make a desktop source login or verification session reusable by the
 source-aware JVM HTTP requests used for search, book details, TOC refresh and
@@ -68,8 +68,9 @@ password form markers do.
 
 ## Incremental Interfaces
 
-The first implementation increment adds a pure classifier and exposes it on
-source request-debug results:
+The first implementation increment adds a pure classifier, exposes it on
+source request-debug results, and offers the detected login URL to the existing
+embedded browser action:
 
 ```kotlin
 enum class SourceSessionStatus { AUTHENTICATED, LOGIN_REQUIRED, HTTP_ERROR, TRANSPORT_ERROR }
@@ -84,6 +85,11 @@ book details, TOC and content services. Browser UI changes are kept separate
 from this pure request-boundary increment so they can be tested without a
 JavaFX application thread.
 
+When a request debug result is `LOGIN_REQUIRED`, the source editor displays an
+explicit re-login state and uses the final HTTP(S) login URL for the embedded
+browser. Browser completion continues to reuse the existing Cookie capture and
+source-aware refetch path.
+
 ## Test and Acceptance Plan
 
 - 401 and 403 classify as `LOGIN_REQUIRED`.
@@ -96,6 +102,8 @@ JavaFX application thread.
 - Missing status codes classify as `TRANSPORT_ERROR`.
 - `SourceDebugModel` exposes the classification while preserving response
   status, headers and body for inspection.
+- A login-required debug result exposes only a validated HTTP(S) final URL for
+  the re-login action; authenticated results expose no login URL.
 - Existing Cookie isolation, persistence and browser verification tests remain
   passing.
 

@@ -2668,7 +2668,7 @@ private fun SourceEditorDialog(
                     onClick = {
                         runCatching {
                             model.openEmbeddedBrowserVerification(
-                                url = debugUrl,
+                                url = debugResult?.loginUrl ?: debugUrl,
                                 sourceUrl = sourceUrlFromJson(json),
                                 title = sourceNameFromJson(json)
                             )
@@ -2682,10 +2682,13 @@ private fun SourceEditorDialog(
                 ) {
                     Icon(Icons.Default.Search, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("内置浏览器验证")
+                    Text(if (debugResult?.sessionStatus == SourceSessionStatus.LOGIN_REQUIRED) "重新登录" else "内置浏览器验证")
                 }
                 debugResult?.let { result ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (result.sessionStatus == SourceSessionStatus.LOGIN_REQUIRED) {
+                            Text("当前书源需要重新登录", color = MaterialTheme.colorScheme.error)
+                        }
                         Text(
                             when {
                                 result.error != null && result.statusCode != null -> "状态：${result.error}"

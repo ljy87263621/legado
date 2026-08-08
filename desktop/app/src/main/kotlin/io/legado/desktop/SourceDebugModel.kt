@@ -27,6 +27,7 @@ data class SourceDebugResult(
     val requestBody: String? = null,
     val statusCode: Int? = null,
     val sessionStatus: SourceSessionStatus = SourceSessionStatus.TRANSPORT_ERROR,
+    val loginUrl: String? = null,
     val responseHeaders: Map<String, List<String>> = emptyMap(),
     val body: String = "",
     val error: String? = null
@@ -82,6 +83,7 @@ class SourceDebugModel(
                     CoreSourceHttpClient(library, httpClient).request(source, httpRequest)
                 else -> httpClient.request(httpRequest)
             }
+            val sessionStatus = SourceSessionAssessment.classify(response.statusCode, response.url, response.body)
             SourceDebugResult(
                 finalUrl = response.url,
                 requestUrl = httpRequest.url,
@@ -89,7 +91,8 @@ class SourceDebugModel(
                 requestHeaders = httpRequest.headers,
                 requestBody = httpRequest.body,
                 statusCode = response.statusCode,
-                sessionStatus = SourceSessionAssessment.classify(response.statusCode, response.url, response.body),
+                sessionStatus = sessionStatus,
+                loginUrl = SourceSessionAssessment.loginUrl(sessionStatus, response.url),
                 responseHeaders = response.headers,
                 body = response.body,
                 error = response.statusCode.takeUnless { it in 200..299 }?.let { "HTTP $it" }

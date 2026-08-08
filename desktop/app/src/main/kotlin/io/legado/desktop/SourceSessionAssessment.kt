@@ -24,6 +24,15 @@ object SourceSessionAssessment {
         return SourceSessionStatus.AUTHENTICATED
     }
 
+    fun loginUrl(status: SourceSessionStatus, finalUrl: String?): String? = finalUrl
+        ?.takeIf { status == SourceSessionStatus.LOGIN_REQUIRED }
+        ?.takeIf { url ->
+            runCatching {
+                val uri = URI(url)
+                (uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) && !uri.host.isNullOrBlank()
+            }.getOrDefault(false)
+        }
+
     private fun String?.isLoginPath(): Boolean {
         val path = runCatching { URI(this.orEmpty()).path.orEmpty() }.getOrDefault("")
         return path.split('/').any { segment -> segment.lowercase(Locale.ROOT) in loginPathMarkers }
